@@ -6,6 +6,8 @@
 > License：MIT
 
 ---
+## 💡 前置准备
+由于GitHub单文件不得超过25MB，所以我上传到网盘了，下载[这个文件](https://share.feijipan.com/s/eKeQkOas)，并放到 `./BGM` 目录，运行就能测试了。
 
 ## ✨ 功能特性
 
