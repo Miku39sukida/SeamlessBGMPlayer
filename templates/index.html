@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无缝循环播放器</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+    <header class="app-header">
+        <div class="header-left">
+            <button id="drawerToggle" class="hamburger-btn" aria-label="打开曲目列表" title="曲目列表">☰</button>
+            <h1 class="title">🎵 无缝循环播放器</h1>
+        </div>
+        <div class="header-actions">
+            <button id="stopBtn" class="btn btn-danger" title="停止播放">⏹ 停止</button>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="drawer-overlay" id="drawerOverlay" aria-hidden="true"></div>
+        <section class="player-panel">
+            <div class="track-info">
+                <div class="track-name" id="trackName">--</div>
+                <div class="track-meta">
+                    <span id="trackBpm">BPM: --</span>
+                    <span id="trackSig">拍号: --</span>
+                </div>
+            </div>
+
+            <div class="beat-display">
+                <div class="beat-row">
+                    <label>当前小节:拍</label>
+                    <div class="beat-value" id="curBeat">0:0</div>
+                </div>
+                <div class="beat-row">
+                    <label>当前位置(ms)</label>
+                    <div class="beat-value mono" id="curMs">0</div>
+                </div>
+                <div class="beat-row">
+                    <label>当前位置(s)</label>
+                    <div class="beat-value mono" id="curSec">0.000</div>
+                </div>
+            </div>
+
+            <div class="loop-info">
+                <div class="loop-row">
+                    <span class="loop-label">循环起点</span>
+                    <span class="loop-val" id="loopStartInfo">--:--</span>
+                </div>
+                <div class="loop-row">
+                    <span class="loop-label">循环终点</span>
+                    <span class="loop-val" id="loopEndInfo">--:--</span>
+                </div>
+                <div class="loop-row">
+                    <span class="loop-label">循环长度</span>
+                    <span class="loop-val mono" id="loopLenInfo">0.000s</span>
+                </div>
+                <div class="loop-row" id="jumpSegInfo" style="display:none;">
+                    <span class="loop-label">跳转段</span>
+                    <span class="loop-val">--:-- → --:--</span>
+                </div>
+            </div>
+
+            <div class="progress-wrap">
+                <div class="progress-bar" id="progressBar">
+                    <div class="progress-fill" id="progressFill"></div>
+                    <div class="marker marker-loop-start" id="markerLoopStart" title="循环起点"></div>
+                    <div class="marker marker-loop-end" id="markerLoopEnd" title="循环终点"></div>
+                    <div class="marker marker-fade-out" id="markerFadeOut" style="display:none;" title="淡出起点"></div>
+                    <div class="marker marker-jump-seg" id="markerJumpSegStart" style="display:none;" title="跳转段起点"></div>
+                    <div class="marker marker-jump-seg-end" id="markerJumpSegEnd" style="display:none;" title="跳转段终点"></div>
+                </div>
+                <div class="progress-labels">
+                    <span id="progressStart">0:00.000</span>
+                    <span id="progressEnd">0:00.000</span>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="playBtn" class="btn btn-primary btn-lg">▶ 播放</button>
+                <button id="pauseBtn" class="btn btn-warning btn-lg">⏸ 暂停</button>
+                <div class="volume-wrap">
+                    <label>🔊</label>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="100">
+                    <span id="volumeVal">100</span>
+                </div>
+            </div>
+
+            <div class="beat-flash">
+                <div class="flash-dot" id="flashDot1"></div>
+                <div class="flash-dot" id="flashDot2"></div>
+                <div class="flash-dot" id="flashDot3"></div>
+                <div class="flash-dot" id="flashDot4"></div>
+            </div>
+        </section>
+
+        <section class="track-list-panel">
+            <div class="panel-header">
+                <h2>曲目列表</h2>
+                <div class="panel-actions">
+                    <button id="drawerClose" class="btn btn-small btn-danger drawer-close" aria-label="关闭曲目列表" title="关闭">✕</button>
+                    <button id="addBtn" class="btn btn-small btn-primary" title="添加曲目">+</button>
+                </div>
+            </div>
+            <div class="track-list" id="trackList"></div>
+        </section>
+    </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

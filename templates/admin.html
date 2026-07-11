@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置管理 - 无缝循环播放器</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<div class="admin-app">
+  <header class="admin-header">
+    <div class="left">
+      <a href="/" class="back-link">← 返回播放</a>
+      <h1 class="title">⚙️ 配置管理</h1>
+    </div>
+    <div class="right">
+      <button id="chgPwdBtn" class="btn btn-small btn-warning">改密码</button>
+      <button id="logoutBtn" class="btn btn-small btn-danger">退出登录</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <div class="toolbar">
+      <div class="track-count">共 <b id="trackCount">0</b> 首曲目 · <b id="dirCount">0</b> 个 BGM 目录</div>
+      <div class="toolbar-actions">
+        <div class="search-box-wrap" title="全局 BGM 文件名搜索（刷新列表时应用）">
+          <input type="search" id="globalFileSearch" placeholder="🔍 搜索 BGM 文件名…">
+        </div>
+        <button id="refreshBgmBtn" class="btn btn-small" title="重新扫描所有已存在目录">🔄 刷新文件列表</button>
+        <button id="toggleDirPanelBtn" class="btn btn-small" style="background:linear-gradient(135deg,#9a7bff,#6e56d6);">📂 管理 BGM 目录</button>
+        <button id="addBtn" class="btn btn-primary">+ 添加曲目</button>
+        <button id="saveBtn" class="btn btn-primary" style="background:linear-gradient(135deg,#5cd08e,#3ea970);">💾 保存配置</button>
+      </div>
+    </div>
+
+    <!-- ========== BGM 目录管理面板（可折叠） ========== -->
+    <section class="dir-panel" id="dirPanel" style="display:none;">
+      <div class="dir-panel-header">
+        <h3>📂 BGM 多目录管理</h3>
+        <div class="hint">
+          兼容多系统路径：<br>
+          · Windows 示例：<code>C:\Users\XXX\Music</code><br>
+          · Android/手机示例：<code>/sdcard/Music/XXX</code><br>
+          · 本项目相对路径（默认）：<code>./BGM</code>
+        </div>
+      </div>
+      <div class="dir-add-form">
+        <div class="form-group">
+          <label>目录标签（显示用）</label>
+          <input type="text" id="newDirLabel" placeholder="例如：本地音乐 / 手机音乐 / OST合集">
+        </div>
+        <div class="form-group dir-path-group">
+          <label>路径</label>
+          <input type="text" id="newDirPath" placeholder='C:\Users\XXX\Music 或 /sdcard/Music/XXX 或 ./相对路径'>
+        </div>
+        <div class="form-group dir-add-actions">
+          <button id="addDirBtn" class="btn btn-primary">＋ 添加目录</button>
+        </div>
+      </div>
+      <div id="dirList" class="dir-list"></div>
+    </section>
+
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="tracks-container" id="tracksContainer"></div>
+  </main>
+</div>
+
+<div class="modal-mask" id="pwdModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-title">修改管理员密码</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>旧密码</label>
+        <input type="password" id="oldPwd">
+      </div>
+      <div class="form-group">
+        <label>新密码 (≥4位)</label>
+        <input type="password" id="newPwd">
+      </div>
+      <div class="form-group">
+        <label>确认新密码</label>
+        <input type="password" id="newPwd2">
+      </div>
+      <div class="modal-err" id="pwdErr"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-small" id="pwdCancel">取消</button>
+      <button class="btn btn-small btn-primary" id="pwdConfirm">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>
