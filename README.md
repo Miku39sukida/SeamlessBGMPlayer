@@ -7,7 +7,7 @@
 
 ---
 ## 💡 前置准备
-由于GitHub单文件不得超过25MB，所以我上传到网盘了，下载[这个文件](https://share.feijipan.com/s/eKeQkOas)，并放到 `./BGM` 目录，运行就能测试了。
+GitHub 网页端单文件上传上限为25MB，示例音频已托管至网盘，[点击此处下载示例曲目](https://share.feijipan.com/s/eKeQkOas)，下载完毕将音频放入项目内  ./BGM  文件夹，启动服务即可直接测试循环效果。
 
 ## ✨ 功能特性
 
