@@ -61,6 +61,13 @@
 
 ## 🚀 快速开始
 
+### 📥 下载测试音频（首次体验必备）
+> 由于 GitHub 无法上传大于 25MB 的音频文件，项目不内置 BGM。请先下载示例曲目放入 `BGM/` 目录：
+>
+> 👉 [小飞机网盘下载：01_35 - Waifu 4 Laifu.wav](https://share.feijipan.com/s/eKeQkOas)
+>
+> 下载后直接将 `01_35 - Waifu 4 Laifu.wav` 放入项目根目录下的 `BGM/` 文件夹中即可，无需额外配置。
+
 ### 依赖
 - **Python 3.8+**（项目仅依赖 `Flask`；无其他 pip 包）
 
