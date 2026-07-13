@@ -17,6 +17,7 @@ function defaultTrack() {
   return {
     _id: randId(),
     name: '新曲目',
+    category: '未分类',
     filename: '',
     bgm_dir_id: 'default',
     bpm: 120,
@@ -351,6 +352,12 @@ function renderTrackCard(t, index) {
     </div>
     <div class="tc-body">
     <div class="section-title">🎵 基础 &amp; 文件</div>
+    <div class="grid-1">
+      <div class="field">
+        <label>分类 <span class="hint">(默认未分类；主页按此分组折叠显示，同名称归为一组)</span></label>
+        <input type="text" data-k="category" placeholder="例：战斗 / 日常 / BOSS / 抒情 / 钢琴 / 未分类">
+      </div>
+    </div>
     <div class="grid-4">
       <div class="field">
         <label>BPM <span class="hint">(每分钟拍数)</span></label>
@@ -625,7 +632,12 @@ async function init() {
     state.tracks.push(nt);
     markDirty();
     renderAllTracks();
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    const c = $('#tracksContainer');
+    if (c) {
+      requestAnimationFrame(() => {
+        c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+      });
+    }
   });
 
   $('#saveBtn').addEventListener('click', async () => {

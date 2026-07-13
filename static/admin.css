@@ -90,6 +90,28 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+    max-height: calc(100vh - 320px);
+    overflow-y: auto;
+    padding-right: 6px;
+    padding-left: 2px;
+    scroll-behavior: smooth;
+}
+
+.tracks-container::-webkit-scrollbar {
+    width: 10px;
+}
+.tracks-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+.tracks-container::-webkit-scrollbar-thumb {
+    background: rgba(255, 150, 200, 0.35);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.tracks-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 120, 180, 0.55);
+    background-clip: padding-box;
 }
 
 .track-card {
@@ -211,20 +233,21 @@
     font-size: 16px;
 }
 
-.grid-2, .grid-3, .grid-4 {
+.grid-1, .grid-2, .grid-3, .grid-4 {
     display: grid;
     gap: 14px;
     margin-bottom: 14px;
 }
+.grid-1 { grid-template-columns: 1fr; }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 
 @media (max-width: 900px) {
-    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
+    .grid-1, .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 560px) {
-    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .grid-1, .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
 }
 
 .field {
@@ -625,7 +648,7 @@
     }
     .tc-idx { width: 30px; height: 30px; font-size: 14px; border-radius: 9px; }
 
-    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px; }
+    .grid-1, .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px; }
     .field label { font-size: 11px; padding-left: 2px; }
     .field input, .field select { padding: 9px 10px; font-size: 13px; border-radius: 9px; }
     .section-title { font-size: 12px; padding: 5px 10px; margin: 4px 0 8px; }

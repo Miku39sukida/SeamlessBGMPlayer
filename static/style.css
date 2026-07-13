@@ -1,4 +1,12 @@
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: inherit; }
+
+@font-face {
+    font-family: "GenshinJA";
+    src: url("/static/JA-JP.TTF") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
 
 :root {
     --primary: #ff6fa8;
@@ -20,7 +28,7 @@
 html, body {
     width: 100%;
     height: 100%;
-    font-family: "Yu Gothic UI", "Microsoft YaHei", sans-serif;
+    font-family: "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif;
     color: var(--text);
     background: linear-gradient(135deg, var(--bg-grad-start) 0%, var(--bg-grad-end) 100%);
     overflow-x: hidden;
@@ -178,6 +186,8 @@ body.drawer-open .drawer-overlay {
 
     .track-name { font-size: 17px; margin-bottom: 4px; }
     .track-meta { font-size: 12px; gap: 10px; flex-wrap: wrap; }
+    .lyric-panel { padding: 12px 13px; }
+    .lyric-text { min-height: 48px; font-size: 14px; line-height: 1.5; }
 
     .controls {
         flex-wrap: wrap;
@@ -202,29 +212,50 @@ body.drawer-open .drawer-overlay {
     .loop-row { font-size: 12.5px; }
     .flash-dot { width: 22px; height: 22px; }
 
-    /* 抽屉：固定左侧 */
+    /* 抽屉：固定左侧 —— 加!important强制覆盖后面出现的全局.scroll-container/.track-list-panel */
     .track-list-panel {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: 84%;
-        max-width: 360px;
-        border-radius: 0 18px 18px 0;
-        padding: 16px 14px;
-        z-index: 999;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        bottom: 0 !important;
+        width: 84% !important;
+        max-width: 360px !important;
+        height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+        border-radius: 0 18px 18px 0 !important;
+        padding: 16px 14px !important;
+        box-sizing: border-box !important;
+        z-index: 999 !important;
         transform: translateX(-105%);
         transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-        box-shadow: 6px 0 30px rgba(80, 40, 120, 0.25);
-        gap: 12px;
+        box-shadow: 6px 0 30px rgba(80, 40, 120, 0.25) !important;
+        gap: 12px !important;
+        background: var(--panel-bg) !important;
+        border: 1px solid var(--panel-border) !important;
+        backdrop-filter: blur(10px) !important;
     }
-    body.drawer-open .track-list-panel { transform: translateX(0); }
+    body.drawer-open .track-list-panel { transform: translateX(0) !important; }
     .drawer-close { display: inline-flex !important; }
-    .track-list {
-        max-height: none;
-        flex: 1;
-        overflow-y: auto;
+    .panel-header {
+        flex-shrink: 0 !important;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .panel-header h2 { font-size: 18px; color: var(--primary-dark); }
+    .scroll-container {
+        flex: 1 1 0% !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        height: auto !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding-right: 6px !important;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
     }
     .track-item { padding: 11px 12px; gap: 10px; }
     .track-item:hover { transform: none; }
@@ -245,6 +276,35 @@ body.drawer-open .drawer-overlay {
     display: flex;
     flex-direction: column;
     gap: 20px;
+}
+
+.track-list-panel {
+    gap: 16px;
+}
+
+.scroll-container {
+    max-height: 70vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    padding-right: 6px;
+    flex: 0 1 auto;
+}
+
+.scroll-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.scroll-container::-webkit-scrollbar-track {
+    background: rgba(255, 180, 210, 0.1);
+    border-radius: 4px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb {
+    background: linear-gradient(var(--primary), var(--primary-dark));
+    border-radius: 4px;
 }
 
 .panel-header {
@@ -278,6 +338,71 @@ body.drawer-open .drawer-overlay {
     color: var(--text-light);
 }
 
+.lyric-panel {
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px solid rgba(255, 180, 210, 0.3);
+}
+
+.lyric-label {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 8px;
+}
+
+.lyric-text {
+    min-height: 56px;
+    font-size: 17px;
+    line-height: 1.65;
+    font-weight: 700;
+    color: var(--primary-dark);
+    white-space: normal;
+    font-family: "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif;
+    letter-spacing: 0.5px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.lyric-main {
+    color: var(--primary-dark);
+}
+
+.lyric-translation {
+    margin-top: 6px;
+    font-size: 14px;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.lyric-active {
+    color: var(--warning);
+    text-shadow: 0 0 10px rgba(255, 169, 77, 0.35);
+}
+
+.lyric-done {
+    color: var(--success);
+    opacity: 0.85;
+}
+
+.lyric-rest {
+    color: var(--text-light);
+    font-weight: 600;
+    opacity: 0.92;
+}
+
+.lyric-empty {
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.lyric-text.is-empty {
+    color: var(--text-light);
+    font-weight: 600;
+}
+
 .beat-display {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -307,8 +432,9 @@ body.drawer-open .drawer-overlay {
 }
 
 .beat-value.mono {
-    font-family: "Consolas", "Menlo", monospace;
     font-size: 20px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
 
 .loop-info {
@@ -337,7 +463,8 @@ body.drawer-open .drawer-overlay {
 }
 
 .loop-val.mono {
-    font-family: "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
 
 .progress-wrap {
@@ -413,8 +540,9 @@ body.drawer-open .drawer-overlay {
     display: flex;
     justify-content: space-between;
     font-size: 12px;
-    font-family: "Consolas", monospace;
     color: var(--text-light);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
 
 .controls {
@@ -513,11 +641,12 @@ body.drawer-open .drawer-overlay {
 }
 
 #volumeVal {
-    font-family: "Consolas", monospace;
     font-weight: 700;
     min-width: 36px;
     text-align: right;
     color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
 
 .beat-flash {
@@ -553,23 +682,97 @@ body.drawer-open .drawer-overlay {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: 520px;
-    overflow-y: auto;
-    padding-right: 4px;
 }
 
-.track-list::-webkit-scrollbar {
-    width: 8px;
+.track-group.collapsible-group {
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(255, 150, 200, 0.25);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: border-color 0.2s, background 0.2s;
+}
+.track-group.collapsible-group:hover {
+    border-color: rgba(255, 120, 180, 0.45);
+    background: rgba(255, 255, 255, 0.72);
 }
 
-.track-list::-webkit-scrollbar-track {
-    background: rgba(255, 180, 210, 0.1);
-    border-radius: 4px;
+.group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 700;
+    color: var(--primary-dark);
+    background: linear-gradient(90deg, rgba(255, 180, 210, 0.18) 0%, rgba(255, 235, 245, 0.05) 100%);
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+.group-header:hover {
+    background: linear-gradient(90deg, rgba(255, 180, 210, 0.3) 0%, rgba(255, 235, 245, 0.12) 100%);
+}
+.group-arrow {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--primary);
+    transform: rotate(0deg);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 14px;
+    text-align: center;
+}
+.track-group:not(.collapsed) .group-arrow {
+    transform: rotate(90deg);
+}
+.group-title {
+    flex: 1;
+    font-size: 15px;
+    letter-spacing: 0.4px;
+}
+.group-count {
+    font-size: 12px;
+    padding: 2px 9px;
+    border-radius: 20px;
+    background: rgba(255, 150, 200, 0.2);
+    color: var(--primary-dark);
+    font-weight: 700;
+    min-width: 28px;
+    text-align: center;
 }
 
-.track-list::-webkit-scrollbar-thumb {
-    background: linear-gradient(var(--primary), var(--primary-dark));
-    border-radius: 4px;
+.group-body-wrap {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    height: 0;
+    overflow: hidden;
+}
+.track-group:not(.collapsed) > .group-body-wrap {
+    grid-template-rows: 1fr;
+    height: auto;
+}
+.group-body-inner {
+    overflow: hidden;
+    min-height: 0;
+    height: 100%;
+}
+.group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 10px 12px;
+}
+.group-body > .track-item {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.track-group.collapsed .group-body > .track-item {
+    opacity: 0.1;
+    transform: translateY(-2px);
+    pointer-events: none;
 }
 
 .track-item {

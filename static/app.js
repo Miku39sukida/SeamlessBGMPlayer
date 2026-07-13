@@ -30,6 +30,8 @@ let jumpSegStartS = 0;
 let jumpSegEndS = 0;
 let jumpSegEnabled = false;
 let loopPhase = 'main';
+let lyricLines = [];
+let activeLyricIndex = -1;
 
 const $ = (id) => document.getElementById(id);
 
@@ -525,6 +527,199 @@ const loadAudio = async (cfg) => {
     DLog(`loaded: dur=${audioDurS.toFixed(3)}s sr=${audioBuffer.sampleRate} ch=${audioBuffer.numberOfChannels} from dir=${cfg.bgm_dir_id || '(compat/default)'}`);
 };
 
+const escapeHtml = (value) => String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const _isPureEnglishText = (text) => {
+    if (!text) return true;
+    return /^[A-Za-z0-9\s'\-,.?!:;()"]+$/.test(text);
+};
+
+const _buildFlattenCharSlots = (karaoke) => {
+    if (!Array.isArray(karaoke) || karaoke.length === 0) return [];
+
+    const groups = [];
+    for (let i = 0; i < karaoke.length; i += 1) {
+        const t = karaoke[i].time_sec || 0;
+        const txt = karaoke[i].text || '';
+        if (!txt) continue;
+        if (groups.length > 0 && Math.abs(groups[groups.length - 1].start - t) < 1e-6) {
+            groups[groups.length - 1].tokens.push(txt);
+            groups[groups.length - 1].text += txt;
+        } else {
+            groups.push({ start: t, tokens: [txt], text: txt, end: null });
+        }
+    }
+    if (groups.length === 0) return [];
+
+    for (let i = 0; i < groups.length - 1; i += 1) {
+        groups[i].end = groups[i + 1].start;
+    }
+
+    let avgPerChar = 0;
+    let totalChar = 0;
+    let totalDur = 0;
+    for (let i = 0; i < groups.length - 1; i += 1) {
+        const dur = (groups[i].end || groups[i].start) - groups[i].start;
+        if (dur > 0) {
+            totalDur += dur;
+            totalChar += groups[i].text.length;
+        }
+    }
+    if (totalChar > 0 && totalDur > 0) {
+        avgPerChar = totalDur / totalChar;
+    } else {
+        avgPerChar = 0.4;
+    }
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup.end === null) {
+        lastGroup.end = lastGroup.start + Math.max(0.6, avgPerChar * Math.max(1, lastGroup.text.length));
+    }
+
+    const slots = [];
+    for (let g = 0; g < groups.length; g += 1) {
+        const group = groups[g];
+        const duration = (group.end || group.start) - group.start;
+        if (duration <= 0) {
+            slots.push({ start: group.start, end: group.start + 0.2, text: group.text });
+            continue;
+        }
+        if (_isPureEnglishText(group.text)) {
+            slots.push({ start: group.start, end: group.end, text: group.text });
+        } else {
+            const chars = Array.from(group.text);
+            const n = chars.length;
+            if (n === 0) continue;
+            if (n === 1) {
+                slots.push({ start: group.start, end: group.end, text: chars[0] });
+            } else {
+                const step = duration / n;
+                for (let c = 0; c < n; c += 1) {
+                    const s = group.start + step * c;
+                    const e = c === n - 1 ? group.end : group.start + step * (c + 1);
+                    slots.push({ start: s, end: e, text: chars[c] });
+                }
+            }
+        }
+    }
+    return slots;
+};
+
+const renderLyricBody = (entry, currentSec) => {
+    if (!entry) return '<span class="lyric-empty">暂无歌词</span>';
+    const karaoke = Array.isArray(entry.karaoke) ? entry.karaoke : [];
+    let html = '';
+    if (karaoke.length > 0) {
+        const slots = _buildFlattenCharSlots(karaoke);
+        let done = '';
+        let active = '';
+        let rest = '';
+        if (slots.length === 0) {
+            rest = karaoke.map((t) => t.text).join('');
+        } else {
+            let idx = slots.findIndex((s) => s.start > currentSec + 1e-9);
+            if (idx === 0) {
+                rest = slots.map((s) => s.text).join('');
+            } else if (idx === -1) {
+                const last = slots[slots.length - 1];
+                if (currentSec < last.end - 1e-9) {
+                    done = slots.slice(0, slots.length - 1).map((s) => s.text).join('');
+                    active = last.text;
+                } else {
+                    done = slots.map((s) => s.text).join('');
+                }
+            } else {
+                const currentSlot = slots[idx - 1];
+                if (currentSec < currentSlot.end - 1e-9) {
+                    done = slots.slice(0, idx - 1).map((s) => s.text).join('');
+                    active = currentSlot.text;
+                    rest = slots.slice(idx).map((s) => s.text).join('');
+                } else {
+                    done = slots.slice(0, idx).map((s) => s.text).join('');
+                    rest = slots.slice(idx).map((s) => s.text).join('');
+                }
+            }
+        }
+
+        if (active) {
+            html = `<span class="lyric-done">${escapeHtml(done)}</span><span class="lyric-active">${escapeHtml(active)}</span><span class="lyric-rest">${escapeHtml(rest)}</span>`;
+        } else if (done && rest) {
+            html = `<span class="lyric-done">${escapeHtml(done)}</span><span class="lyric-rest">${escapeHtml(rest)}</span>`;
+        } else if (done) {
+            html = `<span class="lyric-done">${escapeHtml(done)}</span>`;
+        } else {
+            html = `<span class="lyric-rest">${escapeHtml(rest)}</span>`;
+        }
+    } else {
+        html = escapeHtml(entry.text || '');
+    }
+
+    if (entry.translated_text) {
+        return `<div class="lyric-main">${html}</div><div class="lyric-translation">${escapeHtml(entry.translated_text)}</div>`;
+    }
+    return `<div class="lyric-main">${html}</div>`;
+};
+
+const setLyricText = (entry, currentSec) => {
+    const el = $('lyricText');
+    if (!el) return;
+    if (!entry) {
+        el.innerHTML = '<span class="lyric-empty">暂无歌词</span>';
+        el.classList.toggle('is-empty', true);
+        return;
+    }
+    el.innerHTML = renderLyricBody(entry, currentSec);
+    el.classList.toggle('is-empty', false);
+};
+
+const updateLyricDisplay = () => {
+    if (!lyricLines.length) {
+        setLyricText(null, 0);
+        return;
+    }
+    const s = currentPlaySec();
+    let nextIndex = 0;
+    while (nextIndex < lyricLines.length - 1 && lyricLines[nextIndex + 1].time_sec <= s) {
+        nextIndex += 1;
+    }
+    if (nextIndex !== activeLyricIndex) {
+        activeLyricIndex = nextIndex;
+    }
+    const line = lyricLines[activeLyricIndex] || lyricLines[0];
+    setLyricText(line || null, s);
+};
+
+const loadLyrics = async (cfg) => {
+    lyricLines = [];
+    activeLyricIndex = -1;
+    setLyricText(null, 0);
+    try {
+        let url = `/api/lyrics/${encodeURIComponent(cfg.filename)}`;
+        if (cfg && cfg.bgm_dir_id) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'dir_id=' + encodeURIComponent(cfg.bgm_dir_id);
+        }
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('Lyrics fetch failed: ' + resp.status);
+        const data = await resp.json();
+        if (data.ok && Array.isArray(data.data?.lines)) {
+            lyricLines = data.data.lines;
+            if (lyricLines.length > 0) {
+                updateLyricDisplay();
+            } else {
+                setLyricText(null, 0);
+            }
+        } else {
+            setLyricText(null, 0);
+        }
+    } catch (e) {
+        DLog('loadLyrics failed:', e.message);
+        setLyricText(null, 0);
+    }
+};
+
 const applyTrackCfg = (cfg) => {
     activeTrackCfg = cfg;
     beatsPerSec = cfg.bpm / 60.0;
@@ -576,9 +771,11 @@ const playTrack = async (idx) => {
     stopAll();
     const cfg = config.tracks[idx];
     if (!cfg) return;
+    expandCategoryForTrack(idx, true);
     applyTrackCfg(cfg);
     loopPhase = 'main';
     updateInfoPanel(idx);
+    await loadLyrics(cfg);
     await loadAudio(cfg);
     renderMarkers();
     ensureCtx();
@@ -651,6 +848,8 @@ const updateUi = () => {
     $('progressFill').style.width = pct + '%';
     $('progressStart').textContent = fmtTime(0);
     $('progressEnd').textContent = fmtTime(totalDur);
+
+    updateLyricDisplay();
 
     const absFloored = Math.max(1, Math.floor(bb.abs));
     const b0ForDot = absFloored - 1;
@@ -753,31 +952,175 @@ const updateInfoPanel = (idx) => {
 const renderTrackList = () => {
     const list = $('trackList');
     list.innerHTML = '';
+
+    const groups = new Map();
     config.tracks.forEach((cfg, idx) => {
-        const el = document.createElement('div');
-        el.className = 'track-item';
-        const ls = secFromBarBeatWrap(cfg, cfg.loop_start_bar, cfg.loop_start_beat);
-        const le = secFromBarBeatWrap(cfg, cfg.loop_end_bar, cfg.loop_end_beat);
-        const dur = Math.max(0, le - ls);
-        const modeTag = cfg.loop_mode === 'dual' ? ' · 双轨' : ' · 单轨';
-        el.innerHTML = `
-            <div class="idx">${idx + 1}</div>
-            <div class="info">
-                <div class="t-name">${cfg.name}</div>
-                <div class="t-meta">${cfg.bpm} BPM${modeTag} · ${cfg.loop_start_bar}:${cfg.loop_start_beat} → ${cfg.loop_end_bar}:${cfg.loop_end_beat} · 循环${dur.toFixed(2)}s</div>
-            </div>
-            <button class="play-btn" data-idx="${idx}">▶</button>
-        `;
-        el.addEventListener('click', (e) => {
-            let idx2 = idx;
-            if (e.target.classList.contains('play-btn')) {
-                idx2 = parseInt(e.target.dataset.idx);
-            }
-            playTrack(idx2);
-            if (isMobileBreakpoint()) closeDrawer();
-        });
-        list.appendChild(el);
+        const cat = (cfg.category || '未分类').toString().trim() || '未分类';
+        if (!groups.has(cat)) groups.set(cat, []);
+        groups.get(cat).push({ cfg, idx });
     });
+
+    const categoryOrder = Array.from(groups.keys()).sort((a, b) => {
+        if (a === '未分类') return 1;
+        if (b === '未分类') return -1;
+        return a.localeCompare(b, 'zh-CN');
+    });
+
+    categoryOrder.forEach((catName) => {
+        const items = groups.get(catName) || [];
+        const groupEl = document.createElement('div');
+        groupEl.className = 'track-group collapsible-group collapsed';
+        groupEl.dataset.category = catName;
+
+        const headerEl = document.createElement('div');
+        headerEl.className = 'group-header';
+        headerEl.innerHTML = `
+            <span class="group-arrow">▸</span>
+            <span class="group-title">${escapeHtml(catName)}</span>
+            <span class="group-count">${items.length}</span>
+        `;
+
+        const wrapEl = document.createElement('div');
+        wrapEl.className = 'group-body-wrap';
+        const innerEl = document.createElement('div');
+        innerEl.className = 'group-body-inner';
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'group-body';
+
+        items.forEach(({ cfg, idx }) => {
+            const el = document.createElement('div');
+            el.className = 'track-item';
+            el.dataset.trackIdx = String(idx);
+            const ls = secFromBarBeatWrap(cfg, cfg.loop_start_bar, cfg.loop_start_beat);
+            const le = secFromBarBeatWrap(cfg, cfg.loop_end_bar, cfg.loop_end_beat);
+            const dur = Math.max(0, le - ls);
+            const modeTag = cfg.loop_mode === 'dual' ? ' · 双轨' : ' · 单轨';
+            el.innerHTML = `
+                <div class="idx">${idx + 1}</div>
+                <div class="info">
+                    <div class="t-name">${escapeHtml(cfg.name)}</div>
+                    <div class="t-meta">${cfg.bpm} BPM${modeTag} · ${cfg.loop_start_bar}:${cfg.loop_start_beat} → ${cfg.loop_end_bar}:${cfg.loop_end_beat} · 循环${dur.toFixed(2)}s</div>
+                </div>
+                <button class="play-btn" data-idx="${idx}">▶</button>
+            `;
+            el.addEventListener('click', (e) => {
+                let idx2 = idx;
+                if (e.target.classList.contains('play-btn')) {
+                    idx2 = parseInt(e.target.dataset.idx, 10);
+                }
+                playTrack(idx2);
+                if (isMobileBreakpoint()) closeDrawer();
+            });
+            bodyEl.appendChild(el);
+        });
+
+        headerEl.addEventListener('click', () => {
+            const nowCollapsed = groupEl.classList.contains('collapsed');
+            if (nowCollapsed) groupEl.classList.remove('collapsed');
+            else groupEl.classList.add('collapsed');
+            animateGroupHeight(groupEl, !nowCollapsed);
+        });
+
+        innerEl.appendChild(bodyEl);
+        wrapEl.appendChild(innerEl);
+        groupEl.appendChild(headerEl);
+        groupEl.appendChild(wrapEl);
+        list.appendChild(groupEl);
+    });
+};
+
+const animateGroupHeight = (groupEl, toCollapsed) => {
+    const wrapEl = groupEl.querySelector(':scope > .group-body-wrap');
+    const innerEl = groupEl.querySelector(':scope > .group-body-wrap > .group-body-inner');
+    if (!wrapEl || !innerEl) return;
+    const duration = 350;
+    if (toCollapsed) {
+        const current = innerEl.scrollHeight;
+        wrapEl.style.height = current + 'px';
+        wrapEl.style.gridTemplateRows = '0fr';
+        requestAnimationFrame(() => {
+            wrapEl.style.height = '0px';
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                wrapEl.style.height = '';
+                wrapEl.style.gridTemplateRows = '';
+            };
+            wrapEl.addEventListener('transitionend', function onEnd(e) {
+                if (e.target !== wrapEl || e.propertyName !== 'height') return;
+                wrapEl.removeEventListener('transitionend', onEnd);
+                finish();
+            }, { once: false });
+            setTimeout(finish, duration + 30);
+        });
+    } else {
+        wrapEl.style.height = '0px';
+        wrapEl.style.gridTemplateRows = '1fr';
+        requestAnimationFrame(() => {
+            const target = innerEl.scrollHeight;
+            wrapEl.style.height = target + 'px';
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                wrapEl.style.gridTemplateRows = '';
+                if (wrapEl.style.height) {
+                    const actual = innerEl.scrollHeight;
+                    wrapEl.style.height = actual + 'px';
+                }
+            };
+            wrapEl.addEventListener('transitionend', function onEnd(e) {
+                if (e.target !== wrapEl || e.propertyName !== 'height') return;
+                wrapEl.removeEventListener('transitionend', onEnd);
+                finish();
+            }, { once: false });
+            setTimeout(finish, duration + 30);
+        });
+    }
+};
+
+const syncAllExpandedGroupHeights = () => {
+    document.querySelectorAll('.track-group:not(.collapsed)').forEach((g) => {
+        const wrapEl = g.querySelector(':scope > .group-body-wrap');
+        const innerEl = g.querySelector(':scope > .group-body-wrap > .group-body-inner');
+        if (!wrapEl || !innerEl) return;
+        const h = innerEl.scrollHeight;
+        wrapEl.style.height = h + 'px';
+        wrapEl.style.gridTemplateRows = '';
+    });
+};
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('resize', () => {
+        if (window.__resizeTimer) clearTimeout(window.__resizeTimer);
+        window.__resizeTimer = setTimeout(syncAllExpandedGroupHeights, 120);
+    });
+}
+
+const expandCategoryForTrack = (trackIdx, shouldScrollIntoView = true) => {
+    const cfg = config.tracks[trackIdx];
+    if (!cfg) return;
+    const catName = (cfg.category || '未分类').toString().trim() || '未分类';
+    const groupEl = document.querySelector(`.track-group[data-category="${CSS.escape(catName)}"]`);
+    if (!groupEl) return;
+    const wasCollapsed = groupEl.classList.contains('collapsed');
+    groupEl.classList.remove('collapsed');
+    if (wasCollapsed) animateGroupHeight(groupEl, false);
+    if (shouldScrollIntoView) {
+        const itemEl = groupEl.querySelector(`.track-item[data-track-idx="${trackIdx}"]`);
+        if (itemEl) {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    try {
+                        itemEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    } catch (e) {
+                        itemEl.scrollIntoView(false);
+                    }
+                });
+            });
+        }
+    }
 };
 
 const isMobileBreakpoint = () => {
@@ -820,10 +1163,6 @@ const init = async () => {
     }
     renderTrackList();
 
-    $('playBtn').addEventListener('click', () => {
-        if (config.tracks.length > 0) playTrack(0);
-    });
-    $('pauseBtn').addEventListener('click', pauseAll);
     $('stopBtn').addEventListener('click', stopAll);
 
     $('volumeSlider').addEventListener('input', (e) => {

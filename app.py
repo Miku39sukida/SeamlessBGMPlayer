@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "tracks": [
         {
             "name": "Waifu 4 Laifu",
+            "category": "未分类",
             "filename": "01_35 - Waifu 4 Laifu.wav",
             "bgm_dir_id": DEFAULT_DIR_ID,
             "bpm": 160.0,
@@ -119,6 +120,11 @@ def load_config():
     # tracks 保底
     if not isinstance(cfg.get('tracks'), list):
         cfg['tracks'] = []
+    for t in cfg['tracks']:
+        if not isinstance(t, dict):
+            continue
+        if not t.get('category'):
+            t['category'] = '未分类'
     return cfg
 
 def save_config_raw(cfg):
@@ -236,6 +242,88 @@ def resolve_bgm_file(filename, dir_id=None, cfg=None):
             if os.path.isfile(cand):
                 return cand
     return None
+
+
+def _parse_karaoke_tokens(text):
+    """解析 <mm:ss.xx> 形式的逐字时间戳。"""
+    if not text:
+        return []
+    matches = list(re.finditer(r'<(\d+):(\d+(?:\.\d+)?)>', text))
+    if not matches:
+        return []
+    tokens = []
+    for idx, match in enumerate(matches):
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        seg = text[start:end]
+        if not seg:
+            continue
+        tokens.append({
+            'time_sec': int(match.group(1)) * 60 + float(match.group(2)),
+            'text': seg.strip(),
+        })
+    return tokens
+
+
+def parse_lrc_content(content):
+    """解析简化的 LRC 文本，支持普通时间戳、双语同时间戳以及逐字时间戳。"""
+    entries = []
+    if not content:
+        return entries
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        matches = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
+        if not matches:
+            continue
+        text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
+        if not text:
+            continue
+        for minute, sec_text in matches:
+            karaoke_tokens = _parse_karaoke_tokens(text)
+            entries.append({
+                'time_sec': int(minute) * 60 + float(sec_text),
+                'text': re.sub(r'<\d+:\d+(?:\.\d+)?>', '', text).strip(),
+                'karaoke': karaoke_tokens,
+            })
+
+    entries.sort(key=lambda item: item['time_sec'])
+    merged = []
+    for entry in entries:
+        if merged and abs(merged[-1].get('time_sec', 0) - entry.get('time_sec', 0)) < 1e-9:
+            merged[-1]['translated_text'] = entry.get('text', '')
+            if not merged[-1].get('karaoke') and entry.get('karaoke'):
+                merged[-1]['karaoke'] = entry.get('karaoke')
+        else:
+            merged.append(entry)
+    return merged
+
+
+def resolve_lrc_file(filename, dir_id=None, cfg=None):
+    """根据音频文件名解析对应的歌词文件（同名 .lrc）。"""
+    if not filename:
+        return None
+    if cfg is None:
+        cfg = load_config()
+    base_name = os.path.basename(filename)
+    if not base_name:
+        return None
+    audio_path = resolve_bgm_file(base_name, dir_id=dir_id or None, cfg=cfg)
+    if not audio_path:
+        return None
+    audio_dir = os.path.dirname(audio_path)
+    stem, ext = os.path.splitext(base_name)
+    if ext.lower() == '.lrc':
+        candidates = [base_name]
+    else:
+        candidates = [f'{stem}.lrc', base_name]
+    for candidate in candidates:
+        full_path = os.path.join(audio_dir, candidate)
+        if os.path.isfile(full_path):
+            return full_path
+    return None
+
 
 def login_required(fn):
     @wraps(fn)
@@ -522,6 +610,29 @@ def get_bgm(filename):
     if not full_path or not os.path.isfile(full_path):
         return jsonify({"ok": False, "error": "File not found"}), 404
     return send_file(full_path)
+
+@app.route('/api/lyrics/<path:filename>')
+def get_lyrics(filename):
+    """返回与当前音频同名的歌词文件内容。若未找到则返回空列表。"""
+    dir_id = request.args.get('dir_id') or ''
+    base = os.path.basename(filename)
+    full_path = resolve_lrc_file(base, dir_id=dir_id or None)
+    if not full_path or not os.path.isfile(full_path):
+        return jsonify({"ok": True, "data": {"lines": []}})
+    with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
+        content = fh.read()
+    return jsonify({"ok": True, "data": {"lines": parse_lrc_content(content)}})
+
+@app.route('/font/<path:filename>')
+def get_font(filename):
+    """返回 Font 目录下的字体文件（原神日式字体等）。"""
+    base = os.path.basename(filename)
+    font_path = os.path.join(BASE_DIR, 'Font', base)
+    if not os.path.isfile(font_path):
+        return jsonify({"ok": False, "error": "Font not found"}), 404
+    resp = send_file(font_path, conditional=True)
+    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return resp
 
 @app.route('/api/config')
 def get_config():
