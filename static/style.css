@@ -8,6 +8,14 @@
     font-display: swap;
 }
 
+@font-face {
+    font-family: "Teyvat";
+    src: url("/static/TEYVATBLACK-REGULAR.TTF") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --primary: #ff6fa8;
     --primary-dark: #e85a94;
@@ -360,7 +368,7 @@ body.drawer-open .drawer-overlay {
     font-weight: 700;
     color: var(--primary-dark);
     white-space: normal;
-    font-family: "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif;
+    font-family: inherit;
     letter-spacing: 0.5px;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -368,6 +376,10 @@ body.drawer-open .drawer-overlay {
 
 .lyric-main {
     color: var(--primary-dark);
+}
+
+#lyricText.font-teyvat {
+    font-family: "Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif !important;
 }
 
 .lyric-translation {

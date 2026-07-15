@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>配置管理 - 无缝循环播放器</title>
 <link rel="preload" href="/static/JA-JP.TTF" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/static/TEYVATBLACK-REGULAR.TTF" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/admin.css">
 </head>
@@ -29,8 +30,9 @@
           <input type="search" id="globalFileSearch" placeholder="🔍 搜索 BGM 文件名…">
         </div>
         <button id="refreshBgmBtn" class="btn btn-small" title="重新扫描所有已存在目录">🔄 刷新文件列表</button>
-        <button id="toggleDirPanelBtn" class="btn btn-small" style="background:linear-gradient(135deg,#9a7bff,#6e56d6);">📂 管理 BGM 目录</button>
-        <button id="addBtn" class="btn btn-primary">+ 添加曲目</button>
+    <button id="toggleDirPanelBtn" class="btn btn-small" style="background:linear-gradient(135deg,#9a7bff,#6e56d6);">📂 管理 BGM 目录</button>
+    <button id="beatCalcBtn" class="btn btn-small" style="background:linear-gradient(135deg,#ff96c0,#ff6eb4);">🎵 节拍计算器</button>
+    <button id="addBtn" class="btn btn-primary">+ 添加曲目</button>
         <button id="saveBtn" class="btn btn-primary" style="background:linear-gradient(135deg,#5cd08e,#3ea970);">💾 保存配置</button>
       </div>
     </div>
@@ -93,6 +95,73 @@
   </div>
 </div>
 
+<div class="beat-calc-window" id="beatCalcWindow">
+  <div class="beat-calc-header">
+    <div class="beat-calc-title">🎵 节拍计算器</div>
+    <div class="beat-calc-controls-right">
+      <button class="beat-calc-minimize" id="beatCalcMinimize">—</button>
+      <button class="beat-calc-close" id="beatCalcClose">✕</button>
+    </div>
+  </div>
+  <div class="beat-calc-body">
+    <div class="beat-calc-section">
+      <label>BGM 文件目录</label>
+      <select id="beatCalcDir" class="beat-calc-select"></select>
+    </div>
+    <div class="beat-calc-section">
+      <label>BGM 文件 <span class="hint">(可搜索过滤)</span></label>
+      <div class="beat-calc-file-picker">
+        <input type="search" id="beatCalcFileSearch" class="beat-calc-search" placeholder="🔍 按文件名搜索…">
+        <select id="beatCalcFile" class="beat-calc-select" size="6"></select>
+      </div>
+    </div>
+    <div class="beat-calc-grid">
+      <div class="beat-calc-section">
+        <label>BPM <span class="hint">(每分钟拍数)</span></label>
+        <input type="number" id="beatCalcBpm" value="120" step="0.1" min="10" max="500">
+      </div>
+      <div class="beat-calc-section">
+        <label>拍号 (每小节)</label>
+        <input type="number" id="beatCalcBeatsPerBar" value="4" step="1" min="1" max="16">
+      </div>
+    </div>
+    <div class="beat-calc-grid">
+      <div class="beat-calc-section">
+        <label>零点小节</label>
+        <input type="number" id="beatCalcZeroBar" value="1" step="1" min="1">
+      </div>
+      <div class="beat-calc-section">
+        <label>零点拍</label>
+        <input type="number" id="beatCalcZeroBeat" value="1" step="0.1" min="1">
+      </div>
+    </div>
+    <div class="beat-calc-section">
+      <label>播放进度</label>
+      <div class="beat-calc-progress-wrap">
+        <input type="range" id="beatCalcProgress" min="0" max="100" value="0" step="0.1">
+        <div class="beat-calc-time-display">
+          <span id="beatCalcCurrentTime">0:00.00</span> / <span id="beatCalcTotalTime">0:00.00</span>
+        </div>
+      </div>
+    </div>
+    <div class="beat-calc-bar-display">
+      <div class="beat-calc-bar-label">当前节拍位置</div>
+      <div class="beat-calc-bar-value" id="beatCalcBarValue">1:1 (小节:拍)</div>
+    </div>
+    <div class="beat-calc-controls">
+      <button id="beatCalcPlay" class="beat-calc-btn btn-primary">▶ 播放</button>
+      <button id="beatCalcPause" class="beat-calc-btn" style="display:none;">⏸ 暂停</button>
+      <button id="beatCalcStop" class="beat-calc-btn">⏹ 停止</button>
+    </div>
+    <div class="beat-calc-status" id="beatCalcStatus"></div>
+  </div>
+</div>
+
+<div class="beat-calc-minimized" id="beatCalcMinimized" style="display:none;">
+  <button id="beatCalcRestore" class="beat-calc-min-btn">🎵</button>
+</div>
+
 <script src="/static/admin.js"></script>
+<script src="/static/beat-calculator.js"></script>
 </body>
 </html>

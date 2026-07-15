@@ -3,8 +3,12 @@ import re
 import json
 import uuid
 import secrets
+import mimetypes
 from functools import wraps
 from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect
+
+mimetypes.add_type('font/ttf', '.ttc')
+mimetypes.add_type('font/ttf', '.ttf')
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -39,7 +43,8 @@ DEFAULT_CONFIG = {
             "fade_in_beats": 0,
             "fade_out_beats": 0,
             "crossfade_beats": 0,
-            "loop_mode": "single"
+            "loop_mode": "single",
+            "font_face": "default"
         }
     ]
 }
@@ -245,7 +250,7 @@ def resolve_bgm_file(filename, dir_id=None, cfg=None):
 
 
 def _parse_karaoke_tokens(text):
-    """解析 <mm:ss.xx> 形式的逐字时间戳。"""
+    """解析 <mm:ss.xx> 形式的逐字时间戳。保留空文本token用于标记停顿和行尾结束时间。"""
     if not text:
         return []
     matches = list(re.finditer(r'<(\d+):(\d+(?:\.\d+)?)>', text))
@@ -256,11 +261,9 @@ def _parse_karaoke_tokens(text):
         start = match.end()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
         seg = text[start:end]
-        if not seg:
-            continue
         tokens.append({
             'time_sec': int(match.group(1)) * 60 + float(match.group(2)),
-            'text': seg.strip(),
+            'text': seg,
         })
     return tokens
 
@@ -647,14 +650,11 @@ def save_config():
         return jsonify({"ok": False, "error": "格式错误，缺少 tracks 数组"}), 400
     cfg = load_config()
     cfg['tracks'] = data['tracks']
-    # 如果前端也传了 bgm_dirs（完整替换），允许
     if isinstance(data.get('bgm_dirs'), list):
-        # 但不允许删除默认目录，防止配置页面把 default 删了
         new_dirs = [d for d in data['bgm_dirs'] if isinstance(d, dict)]
         has_default = any(d.get('id') == DEFAULT_DIR_ID for d in new_dirs)
         if not has_default:
             new_dirs.insert(0, {"id": DEFAULT_DIR_ID, "label": "默认目录", "path": "./BGM"})
-        # 校验每条都有 id/label/path 基本形态
         for d in new_dirs:
             if not d.get('id') or 'path' not in d:
                 return jsonify({"ok": False, "error": "bgm_dirs 条目缺少 id 或 path 字段"}), 400

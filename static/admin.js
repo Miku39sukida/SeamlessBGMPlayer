@@ -37,6 +37,7 @@ function defaultTrack() {
     jump_seg_start_beat: 0,
     jump_seg_end_bar: 0,
     jump_seg_end_beat: 0,
+    font_face: 'default',
   };
 }
 
@@ -356,6 +357,13 @@ function renderTrackCard(t, index) {
       <div class="field">
         <label>分类 <span class="hint">(默认未分类；主页按此分组折叠显示，同名称归为一组)</span></label>
         <input type="text" data-k="category" placeholder="例：战斗 / 日常 / BOSS / 抒情 / 钢琴 / 未分类">
+      </div>
+      <div class="field">
+        <label>歌词字体</label>
+        <select data-k="font_face">
+          <option value="default">默认字体</option>
+          <option value="teyvat">提瓦特字体</option>
+        </select>
       </div>
     </div>
     <div class="grid-4">

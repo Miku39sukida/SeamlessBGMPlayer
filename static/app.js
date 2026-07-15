@@ -538,82 +538,114 @@ const _isPureEnglishText = (text) => {
     return /^[A-Za-z0-9\s'\-,.?!:;()"]+$/.test(text);
 };
 
-const _buildFlattenCharSlots = (karaoke) => {
+const _buildFlattenCharSlots = (karaoke, lineEndTime = null) => {
     if (!Array.isArray(karaoke) || karaoke.length === 0) return [];
 
-    const groups = [];
+    const tokens = [];
     for (let i = 0; i < karaoke.length; i += 1) {
-        const t = karaoke[i].time_sec || 0;
-        const txt = karaoke[i].text || '';
-        if (!txt) continue;
-        if (groups.length > 0 && Math.abs(groups[groups.length - 1].start - t) < 1e-6) {
-            groups[groups.length - 1].tokens.push(txt);
-            groups[groups.length - 1].text += txt;
+        const curr = karaoke[i];
+        const currTime = curr.time_sec || 0;
+        const currText = curr.text || '';
+
+        if (!currText) {
+            if (tokens.length > 0) {
+                tokens[tokens.length - 1].end = currTime;
+            }
+            continue;
+        }
+
+        let nextTime = null;
+        let j = i + 1;
+        while (j < karaoke.length && Math.abs((karaoke[j].time_sec || 0) - currTime) < 1e-6) {
+            j += 1;
+        }
+
+        const hasSameTimeAfter = j > i + 1;
+        let endTime = null;
+        for (let k = j; k < karaoke.length; k += 1) {
+            const t = karaoke[k].time_sec || 0;
+            if (Math.abs(t - currTime) >= 1e-6) {
+                nextTime = t;
+                break;
+            }
+        }
+
+        if (hasSameTimeAfter) {
+            endTime = currTime;
+        } else if (nextTime !== null) {
+            endTime = nextTime;
+        }
+
+        tokens.push({ start: currTime, end: endTime, text: currText });
+    }
+
+    if (tokens.length === 0) return [];
+
+    const lastToken = tokens[tokens.length - 1];
+    if (lastToken.end === null) {
+        if (lineEndTime !== null && lineEndTime > lastToken.start) {
+            lastToken.end = lineEndTime;
         } else {
-            groups.push({ start: t, tokens: [txt], text: txt, end: null });
+            lastToken.end = lastToken.start + 0.6;
         }
-    }
-    if (groups.length === 0) return [];
-
-    for (let i = 0; i < groups.length - 1; i += 1) {
-        groups[i].end = groups[i + 1].start;
-    }
-
-    let avgPerChar = 0;
-    let totalChar = 0;
-    let totalDur = 0;
-    for (let i = 0; i < groups.length - 1; i += 1) {
-        const dur = (groups[i].end || groups[i].start) - groups[i].start;
-        if (dur > 0) {
-            totalDur += dur;
-            totalChar += groups[i].text.length;
-        }
-    }
-    if (totalChar > 0 && totalDur > 0) {
-        avgPerChar = totalDur / totalChar;
-    } else {
-        avgPerChar = 0.4;
-    }
-    const lastGroup = groups[groups.length - 1];
-    if (lastGroup.end === null) {
-        lastGroup.end = lastGroup.start + Math.max(0.6, avgPerChar * Math.max(1, lastGroup.text.length));
     }
 
     const slots = [];
-    for (let g = 0; g < groups.length; g += 1) {
-        const group = groups[g];
-        const duration = (group.end || group.start) - group.start;
+    for (let i = 0; i < tokens.length; i += 1) {
+        const token = tokens[i];
+        const duration = token.end - token.start;
         if (duration <= 0) {
-            slots.push({ start: group.start, end: group.start + 0.2, text: group.text });
+            const chars = Array.from(token.text);
+            for (let c = 0; c < chars.length; c += 1) {
+                slots.push({ start: token.start, end: token.start, text: chars[c] });
+            }
             continue;
         }
-        if (_isPureEnglishText(group.text)) {
-            slots.push({ start: group.start, end: group.end, text: group.text });
+
+        if (_isPureEnglishText(token.text)) {
+            slots.push({ start: token.start, end: token.end, text: token.text });
         } else {
-            const chars = Array.from(group.text);
-            const n = chars.length;
-            if (n === 0) continue;
-            if (n === 1) {
-                slots.push({ start: group.start, end: group.end, text: chars[0] });
+            const chars = Array.from(token.text);
+            const charCount = chars.length;
+            if (charCount === 0) continue;
+            if (charCount === 1) {
+                slots.push({ start: token.start, end: token.end, text: chars[0] });
             } else {
-                const step = duration / n;
-                for (let c = 0; c < n; c += 1) {
-                    const s = group.start + step * c;
-                    const e = c === n - 1 ? group.end : group.start + step * (c + 1);
+                const step = duration / charCount;
+                for (let c = 0; c < charCount; c += 1) {
+                    const s = token.start + step * c;
+                    const e = c === charCount - 1 ? token.end : token.start + step * (c + 1);
                     slots.push({ start: s, end: e, text: chars[c] });
                 }
             }
         }
     }
+
+    if (slots.length === 0) return [];
+    let totalDur = 0;
+    let totalChar = 0;
+    for (let i = 0; i < slots.length - 1; i += 1) {
+        const dur = slots[i + 1].start - slots[i].start;
+        if (dur > 0) {
+            totalDur += dur;
+            totalChar += slots[i].text.length;
+        }
+    }
+    const avgPerChar = totalChar > 0 && totalDur > 0 ? totalDur / totalChar : 0.4;
+    const lastSlot = slots[slots.length - 1];
+    if (lastSlot.end - lastSlot.start <= 0) {
+        lastSlot.end = lastSlot.start + Math.max(0.6, avgPerChar * Math.max(1, lastSlot.text.length));
+    }
+
     return slots;
 };
 
-const renderLyricBody = (entry, currentSec) => {
+const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
     if (!entry) return '<span class="lyric-empty">暂无歌词</span>';
     const karaoke = Array.isArray(entry.karaoke) ? entry.karaoke : [];
     let html = '';
     if (karaoke.length > 0) {
-        const slots = _buildFlattenCharSlots(karaoke);
+        const slots = _buildFlattenCharSlots(karaoke, lineEndTime);
         let done = '';
         let active = '';
         let rest = '';
@@ -663,7 +695,7 @@ const renderLyricBody = (entry, currentSec) => {
     return `<div class="lyric-main">${html}</div>`;
 };
 
-const setLyricText = (entry, currentSec) => {
+const setLyricText = (entry, currentSec, lineEndTime = null) => {
     const el = $('lyricText');
     if (!el) return;
     if (!entry) {
@@ -671,7 +703,7 @@ const setLyricText = (entry, currentSec) => {
         el.classList.toggle('is-empty', true);
         return;
     }
-    el.innerHTML = renderLyricBody(entry, currentSec);
+    el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
     el.classList.toggle('is-empty', false);
 };
 
@@ -689,7 +721,9 @@ const updateLyricDisplay = () => {
         activeLyricIndex = nextIndex;
     }
     const line = lyricLines[activeLyricIndex] || lyricLines[0];
-    setLyricText(line || null, s);
+    const nextLine = lyricLines[activeLyricIndex + 1];
+    const lineEndTime = nextLine ? nextLine.time_sec : null;
+    setLyricText(line || null, s, lineEndTime);
 };
 
 const loadLyrics = async (cfg) => {
@@ -773,6 +807,14 @@ const playTrack = async (idx) => {
     if (!cfg) return;
     expandCategoryForTrack(idx, true);
     applyTrackCfg(cfg);
+    const lyricEl = $('lyricText');
+    if (lyricEl) {
+        lyricEl.classList.remove('font-teyvat');
+    lyricEl.style.fontFamily = '';
+    if (cfg.font_face === 'teyvat') {
+        lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
+    }
+    }
     loopPhase = 'main';
     updateInfoPanel(idx);
     await loadLyrics(cfg);
@@ -831,7 +873,7 @@ const stopAll = () => {
     nextTrack = null;
 };
 
-const pauseAll = () => stopAll();
+
 
 let lastBeatIdx = -1;
 const updateUi = () => {
