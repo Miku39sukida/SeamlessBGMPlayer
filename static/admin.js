@@ -347,6 +347,8 @@ function renderTrackCard(t, index) {
       <div class="tc-actions">
         <button class="btn btn-icon" data-act="up" title="上移">↑</button>
         <button class="btn btn-icon" data-act="down" title="下移">↓</button>
+        <button class="btn btn-icon" data-act="insert-above" title="在上方添加">⊕↑</button>
+        <button class="btn btn-icon" data-act="insert-below" title="在下方添加">⊕↓</button>
         <button class="btn btn-icon" data-act="duplicate" title="复制">⎘</button>
         <button class="btn btn-icon" data-act="delete" title="删除" style="background:var(--danger);">🗑</button>
       </div>
@@ -537,6 +539,28 @@ function renderTrackCard(t, index) {
     [state.tracks[i + 1], state.tracks[i]] = [state.tracks[i], state.tracks[i + 1]];
     markDirty();
     renderAllTracks();
+  });
+  card.querySelector('[data-act="insert-above"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    const newTrack = { ...defaultTrack(), _expanded: true };
+    state.tracks.splice(i, 0, newTrack);
+    markDirty();
+    renderAllTracks();
+    requestAnimationFrame(() => {
+      const container = $('#tracksContainer');
+      if (container) container.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+  card.querySelector('[data-act="insert-below"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    const newTrack = { ...defaultTrack(), _expanded: true };
+    state.tracks.splice(i + 1, 0, newTrack);
+    markDirty();
+    renderAllTracks();
+    requestAnimationFrame(() => {
+      const newCard = document.querySelector(`.track-card[data-track-id="${newTrack._id}"]`);
+      if (newCard) newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   });
   card.querySelector('[data-act="duplicate"]').addEventListener('click', () => {
     const i = state.tracks.indexOf(t);
