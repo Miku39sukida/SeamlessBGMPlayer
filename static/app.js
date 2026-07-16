@@ -689,8 +689,8 @@ const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
         html = escapeHtml(entry.text || '');
     }
 
-    if (entry.translated_text) {
-        return `<div class="lyric-main">${html}</div><div class="lyric-translation">${escapeHtml(entry.translated_text)}</div>`;
+    if (entry.translation) {
+        return `<div class="lyric-main">${html}</div><div class="lyric-translation">${escapeHtml(entry.translation)}</div>`;
     }
     return `<div class="lyric-main">${html}</div>`;
 };
@@ -732,8 +732,24 @@ const loadLyrics = async (cfg) => {
     setLyricText(null, 0);
     try {
         let url = `/api/lyrics/${encodeURIComponent(cfg.filename)}`;
+        const params = [];
         if (cfg && cfg.bgm_dir_id) {
-            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'dir_id=' + encodeURIComponent(cfg.bgm_dir_id);
+            params.push('dir_id=' + encodeURIComponent(cfg.bgm_dir_id));
+        }
+        if (cfg && typeof cfg.bpm === 'number') {
+            params.push('bpm=' + cfg.bpm);
+        }
+        if (cfg && typeof cfg.beats_per_bar === 'number') {
+            params.push('beats_per_bar=' + cfg.beats_per_bar);
+        }
+        if (cfg && typeof cfg.audio_zero_bar === 'number') {
+            params.push('audio_zero_bar=' + cfg.audio_zero_bar);
+        }
+        if (cfg && typeof cfg.audio_zero_beat === 'number') {
+            params.push('audio_zero_beat=' + cfg.audio_zero_beat);
+        }
+        if (params.length > 0) {
+            url += '?' + params.join('&');
         }
         const resp = await fetch(url);
         if (!resp.ok) throw new Error('Lyrics fetch failed: ' + resp.status);

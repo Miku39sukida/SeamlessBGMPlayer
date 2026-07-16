@@ -303,8 +303,64 @@ def parse_lrc_content(content):
     return merged
 
 
+def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1):
+    """解析 BRC（Beat-based Lyrics）文本，格式为 [小节:拍]。
+    根据 BPM 和零拍偏移配置将节拍时间转换为秒数。
+    支持原文译文并行：相同时间戳的连续歌词合并为原文+译文。"""
+    entries = []
+    if not content:
+        return entries
+    beats_per_sec = bpm / 60.0
+    zero_abs_beat = (audio_zero_bar - 1) * beats_per_bar + audio_zero_beat
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        matches = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
+        if not matches:
+            continue
+        text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
+        if not text:
+            continue
+        for bar_str, beat_str in matches:
+            bar = int(bar_str)
+            beat = float(beat_str)
+            abs_beat = (bar - 1) * beats_per_bar + beat
+            time_sec = (abs_beat - zero_abs_beat) / beats_per_sec
+            entries.append({
+                'time_sec': max(0, time_sec),
+                'text': text.strip(),
+                'karaoke': [],
+            })
+
+    entries.sort(key=lambda item: item['time_sec'])
+
+    merged = []
+    i = 0
+    while i < len(entries):
+        current = entries[i]
+        if i + 1 < len(entries) and abs(entries[i + 1]['time_sec'] - current['time_sec']) < 0.01:
+            merged.append({
+                'time_sec': current['time_sec'],
+                'text': current['text'],
+                'translation': entries[i + 1]['text'],
+                'karaoke': [],
+            })
+            i += 2
+        else:
+            merged.append({
+                'time_sec': current['time_sec'],
+                'text': current['text'],
+                'karaoke': [],
+            })
+            i += 1
+
+    return merged
+
+
 def resolve_lrc_file(filename, dir_id=None, cfg=None):
-    """根据音频文件名解析对应的歌词文件（同名 .lrc）。"""
+    """根据音频文件名解析对应的歌词文件（同名 .lrc 或 .brc）。
+    优先级：.brc > .lrc，优先查找节拍格式歌词。"""
     if not filename:
         return None
     if cfg is None:
@@ -317,10 +373,10 @@ def resolve_lrc_file(filename, dir_id=None, cfg=None):
         return None
     audio_dir = os.path.dirname(audio_path)
     stem, ext = os.path.splitext(base_name)
-    if ext.lower() == '.lrc':
+    if ext.lower() in ('.lrc', '.brc'):
         candidates = [base_name]
     else:
-        candidates = [f'{stem}.lrc', base_name]
+        candidates = [f'{stem}.brc', f'{stem}.lrc', base_name]
     for candidate in candidates:
         full_path = os.path.join(audio_dir, candidate)
         if os.path.isfile(full_path):
@@ -616,15 +672,55 @@ def get_bgm(filename):
 
 @app.route('/api/lyrics/<path:filename>')
 def get_lyrics(filename):
-    """返回与当前音频同名的歌词文件内容。若未找到则返回空列表。"""
+    """返回与当前音频同名的歌词文件内容。若未找到则返回空列表。
+    支持 BRC（节拍歌词）格式，根据文件扩展名选择解析方式：.brc 使用节拍解析，.lrc 使用时间戳解析。"""
     dir_id = request.args.get('dir_id') or ''
+    bpm = float(request.args.get('bpm', 120))
+    beats_per_bar = float(request.args.get('beats_per_bar', 4))
+    audio_zero_bar = float(request.args.get('audio_zero_bar', 1))
+    audio_zero_beat = float(request.args.get('audio_zero_beat', 1))
     base = os.path.basename(filename)
     full_path = resolve_lrc_file(base, dir_id=dir_id or None)
     if not full_path or not os.path.isfile(full_path):
         return jsonify({"ok": True, "data": {"lines": []}})
     with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
         content = fh.read()
-    return jsonify({"ok": True, "data": {"lines": parse_lrc_content(content)}})
+    _, ext = os.path.splitext(full_path)
+    if ext.lower() == '.brc':
+        lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
+                                   audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat)
+    else:
+        lines = parse_lrc_content(content)
+    return jsonify({"ok": True, "data": {"lines": lines}})
+
+
+@app.route('/api/save-brc', methods=['POST'])
+@login_required
+def save_brc():
+    """保存 BRC 歌词文件到音频同目录。"""
+    data = request.get_json(silent=True) or {}
+    filename = data.get('filename')
+    dir_id = data.get('dir_id')
+    content = data.get('content', '')
+
+    if not filename:
+        return jsonify({"ok": False, "error": "缺少文件名"}), 400
+
+    audio_path = resolve_bgm_file(filename, dir_id=dir_id or None)
+    if not audio_path:
+        return jsonify({"ok": False, "error": "音频文件不存在"}), 400
+
+    audio_dir = os.path.dirname(audio_path)
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    brc_path = os.path.join(audio_dir, stem + '.brc')
+
+    try:
+        with open(brc_path, 'w', encoding='utf-8') as fh:
+            fh.write(content)
+        return jsonify({"ok": True, "data": {"path": brc_path}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route('/font/<path:filename>')
 def get_font(filename):

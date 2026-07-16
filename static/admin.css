@@ -905,3 +905,553 @@
     transform: scale(1.1);
     box-shadow: 0 8px 24px rgba(255, 110, 170, 0.5);
 }
+
+/* ===================== 节奏打点器窗口 ===================== */
+.beat-tapper-window {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 480px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(80, 40, 120, 0.3);
+    backdrop-filter: blur(12px);
+    z-index: 2000;
+    overflow: hidden;
+    display: none;
+}
+
+.beat-tapper-window.show {
+    display: block;
+}
+
+.beat-tapper-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, rgba(255, 180, 80, 0.15), rgba(255, 150, 200, 0.1));
+    border-bottom: 1px solid var(--panel-border);
+    cursor: move;
+    user-select: none;
+}
+
+.beat-tapper-controls-right {
+    display: flex;
+    gap: 4px;
+}
+
+.beat-tapper-minimize, .beat-tapper-close {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-tapper-minimize:hover, .beat-tapper-close:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.beat-tapper-close:hover {
+    background: rgba(255, 100, 120, 0.35);
+}
+
+.beat-tapper-body {
+    padding: 16px;
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+}
+
+.beat-tapper-section {
+    margin-bottom: 12px;
+}
+
+.beat-tapper-section label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-light);
+    margin-bottom: 6px;
+}
+
+.beat-tapper-section input[type="number"],
+.beat-tapper-section input[type="search"],
+.beat-tapper-select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text);
+    box-sizing: border-box;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.beat-tapper-section input[type="search"]:focus {
+    border-color: #ffb347;
+    box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.12);
+}
+
+.beat-tapper-file-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.beat-tapper-file-picker select {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 8px 10px;
+}
+
+.beat-tapper-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.beat-tapper-rhythm-types {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.beat-tapper-rhythm-btn {
+    flex: 1;
+    min-width: 70px;
+    padding: 8px 10px;
+    font-size: 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-tapper-rhythm-btn:hover {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.beat-tapper-rhythm-btn.active {
+    background: linear-gradient(135deg, #ffb347, #ff96c0);
+    color: white;
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(255, 179, 71, 0.35);
+}
+
+.beat-tapper-mode-types {
+    display: flex;
+    gap: 6px;
+}
+
+.beat-tapper-mode-btn {
+    flex: 1;
+    min-width: 80px;
+    padding: 8px 12px;
+    font-size: 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-tapper-mode-btn:hover {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.beat-tapper-mode-btn.active {
+    background: linear-gradient(135deg, #7bc47f, #5cd08e);
+    color: white;
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(123, 196, 127, 0.35);
+}
+
+.beat-tapper-progress-wrap {
+    margin-top: 6px;
+}
+
+.beat-tapper-progress-wrap input[type="range"] {
+    width: 100%;
+    height: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 180, 140, 0.35);
+    border-radius: 4px;
+    outline: none;
+}
+
+.beat-tapper-progress-wrap input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(135deg, #ffb347, #ff96c0);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(255, 179, 71, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+}
+
+.beat-tapper-time-display {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--text-light);
+}
+
+.beat-tapper-bar-display {
+    margin-top: 16px;
+    padding: 12px;
+    background: linear-gradient(135deg, rgba(255, 180, 80, 0.15), rgba(255, 150, 200, 0.15));
+    border-radius: 12px;
+    text-align: center;
+}
+
+.beat-tapper-bar-label {
+    font-size: 12px;
+    color: var(--text-light);
+    margin-bottom: 6px;
+}
+
+.beat-tapper-bar-value {
+    font-size: 24px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #ffb347, #ff6eb4);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.beat-tapper-tap-area {
+    margin-top: 16px;
+    padding: 16px;
+    background: linear-gradient(135deg, rgba(255, 220, 160, 0.2), rgba(255, 180, 200, 0.15));
+    border: 2px dashed rgba(255, 179, 71, 0.4);
+    border-radius: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+}
+
+.beat-tapper-tap-area:hover {
+    border-color: rgba(255, 179, 71, 0.7);
+    background: linear-gradient(135deg, rgba(255, 220, 160, 0.3), rgba(255, 180, 200, 0.2));
+}
+
+.beat-tapper-tap-area.active {
+    border-color: #ffb347;
+    background: linear-gradient(135deg, rgba(255, 179, 71, 0.3), rgba(255, 150, 200, 0.25));
+    transform: scale(1.02);
+}
+
+.beat-tapper-tap-hint {
+    font-size: 13px;
+    color: var(--text-light);
+    margin-bottom: 8px;
+}
+
+.beat-tapper-tap-hint kbd {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    margin: 0 4px;
+}
+
+.beat-tapper-tap-count {
+    font-size: 15px;
+    font-weight: 700;
+    color: #ffb347;
+}
+
+.beat-tapper-preview {
+    margin-top: 16px;
+}
+
+.beat-tapper-preview-label {
+    font-size: 13px;
+    color: var(--text-light);
+    margin-bottom: 6px;
+}
+
+.beat-tapper-preview textarea {
+    width: 100%;
+    height: 120px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: Consolas, monospace;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.95);
+    color: var(--text);
+    resize: none;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.beat-tapper-preview textarea:focus {
+    border-color: #ffb347;
+}
+
+.beat-tapper-controls {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+.beat-tapper-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-tapper-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.beat-tapper-btn.btn-primary {
+    background: linear-gradient(135deg, #ffb347, #ff96c0);
+    color: white;
+}
+
+.beat-tapper-btn.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 179, 71, 0.4);
+}
+
+.beat-tapper-status {
+    margin-top: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-light);
+    min-height: 18px;
+}
+
+.beat-tapper-minimized {
+    position: fixed;
+    bottom: 20px;
+    right: 80px;
+    z-index: 2000;
+}
+
+.beat-tapper-min-btn {
+    width: 56px;
+    height: 56px;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffb347, #ff96c0);
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(255, 179, 71, 0.4);
+    transition: all 0.2s;
+}
+
+.beat-tapper-min-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 8px 24px rgba(255, 179, 71, 0.5);
+}
+
+.beat-tapper-lyrics {
+    margin-top: 16px;
+}
+
+.beat-tapper-lyrics-label {
+    font-size: 13px;
+    color: var(--text-light);
+    margin-bottom: 8px;
+}
+
+.beat-tapper-lyrics-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 8px;
+}
+
+.beat-tapper-lyrics-empty {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-light);
+    font-size: 13px;
+}
+
+.beat-tapper-lyrics-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: all 0.2s;
+}
+
+.beat-tapper-lyrics-item:hover {
+    background: rgba(255, 179, 71, 0.1);
+}
+
+.beat-tapper-lyrics-item.selected {
+    background: rgba(255, 179, 71, 0.2);
+    border: 1px solid rgba(255, 179, 71, 0.3);
+}
+
+.beat-tapper-lyrics-bar {
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffb347;
+    font-family: Consolas, monospace;
+    min-width: 50px;
+    text-align: right;
+}
+
+.beat-tapper-lyrics-input {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 14px;
+    border: 1px solid rgba(255, 180, 210, 0.4);
+    border-radius: 8px;
+    background: white;
+    outline: none;
+    font-family: inherit;
+    color: var(--text);
+    transition: all 0.2s;
+}
+
+.beat-tapper-lyrics-input:focus {
+    border-color: #ffb347;
+    box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.12);
+}
+
+.beat-tapper-lyrics-remove {
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(255, 90, 120, 0.15);
+    color: var(--danger);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.beat-tapper-lyrics-remove:hover {
+    background: rgba(255, 90, 120, 0.3);
+}
+
+.beat-tapper-editor-wrap {
+    position: relative;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.beat-tapper-editor {
+    width: 100%;
+    height: 250px;
+    padding: 12px;
+    font-size: 14px;
+    font-family: Consolas, monospace;
+    border: none;
+    outline: none;
+    background: rgba(255, 255, 255, 0.95);
+    color: var(--text);
+    resize: vertical;
+    line-height: 1.6;
+    box-sizing: border-box;
+}
+
+.beat-tapper-editor:focus {
+    box-shadow: inset 0 0 0 2px rgba(255, 179, 71, 0.2);
+}
+
+.beat-tapper-lyrics-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    justify-content: center;
+}
+
+.beat-tapper-lyrics-add-btn {
+    padding: 8px 16px;
+    font-size: 13px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-tapper-lyrics-add-btn:hover {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #ffb347;
+}
+
+.beat-tapper-mobile-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.beat-tapper-mobile-btn {
+    width: 56px;
+    height: 56px;
+    border: none;
+    border-radius: 50%;
+    font-size: 24px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.beat-tapper-mobile-btn:nth-child(1) {
+    background: linear-gradient(135deg, #5cd08e, #3ea970);
+}
+
+.beat-tapper-mobile-btn:nth-child(2) {
+    background: linear-gradient(135deg, #ffb347, #ff96c0);
+}
+
+.beat-tapper-mobile-btn:nth-child(3) {
+    background: linear-gradient(135deg, #7eb7ff, #5a8dee);
+}
+
+.beat-tapper-mobile-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.beat-tapper-mobile-btn:active {
+    transform: scale(0.95);
+}
