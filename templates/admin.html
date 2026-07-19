@@ -137,7 +137,13 @@
       </div>
     </div>
     <div class="beat-calc-section">
-      <label>播放进度</label>
+        <label>分段变速规则（指定小节+拍号切换BPM）</label>
+        <div class="beat-calc-tempo-changes" id="beatCalcTempoChangesList"></div>
+        <button class="beat-calc-add-tempo-btn" id="beatCalcAddTempoChange" style="margin-top:8px;">＋ 添加变速规则</button>
+        <input type="hidden" id="beatCalcTempoChanges">
+      </div>
+    <div class="beat-calc-section">
+        <label>播放进度</label>
       <div class="beat-calc-progress-wrap">
         <input type="range" id="beatCalcProgress" min="0" max="100" value="0" step="0.1">
         <div class="beat-calc-time-display">
@@ -194,16 +200,22 @@
     </div>
     <div class="beat-tapper-grid">
       <div class="beat-tapper-section">
-        <label>零点小节</label>
-        <input type="number" id="beatTapperZeroBar" value="1" step="1" min="1">
-      </div>
-      <div class="beat-tapper-section">
-        <label>零点拍</label>
-        <input type="number" id="beatTapperZeroBeat" value="1" step="0.1" min="1">
-      </div>
+      <label>零点小节</label>
+      <input type="number" id="beatTapperZeroBar" value="1" step="1" min="1">
     </div>
     <div class="beat-tapper-section">
-      <label>节奏类型</label>
+      <label>零点拍</label>
+      <input type="number" id="beatTapperZeroBeat" value="1" step="0.1" min="1">
+    </div>
+  </div>
+  <div class="beat-tapper-section">
+    <label>分段变速规则（指定小节+拍号切换BPM）</label>
+    <div class="beat-tapper-tempo-changes" id="beatTapperTempoChangesList"></div>
+    <button class="beat-tapper-add-tempo-btn" id="beatTapperAddTempoChange" style="margin-top:8px;">＋ 添加变速规则</button>
+    <input type="hidden" id="beatTapperTempoChanges">
+  </div>
+  <div class="beat-tapper-section">
+    <label>节奏类型</label>
       <div class="beat-tapper-rhythm-types">
         <button class="beat-tapper-rhythm-btn active" data-type="whole">整拍</button>
         <button class="beat-tapper-rhythm-btn" data-type="half">半拍</button>

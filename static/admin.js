@@ -38,6 +38,7 @@ function defaultTrack() {
     jump_seg_end_bar: 0,
     jump_seg_end_beat: 0,
     font_face: 'default',
+    tempo_changes: [],
   };
 }
 
@@ -472,6 +473,12 @@ function renderTrackCard(t, index) {
         <input type="number" step="1" min="1" data-k="jump_seg_end_beat">
       </div>
     </div>
+
+    <div class="section-title">⏱️ 分段变速规则（可选）：指定小节+拍号切换BPM</div>
+    <div class="field">
+      <div class="tempo-changes-list" data-k="tempo_changes"></div>
+      <button class="btn btn-small btn-primary" data-act="add-tempo-change" style="margin-top:8px;">＋ 添加变速规则</button>
+    </div>
     </div>
   `;
 
@@ -574,6 +581,65 @@ function renderTrackCard(t, index) {
     state.tracks = state.tracks.filter(x => x._id !== t._id);
     markDirty();
     renderAllTracks();
+  });
+
+  const renderTempoChanges = () => {
+    const listEl = $('.tempo-changes-list', card);
+    if (!listEl) return;
+    t.tempo_changes = t.tempo_changes || [];
+    
+    listEl.innerHTML = '';
+    if (t.tempo_changes.length === 0) {
+      listEl.innerHTML = '<div class="tc-empty-hint">暂无变速规则，点击上方「＋ 添加变速规则」按钮新增</div>';
+      return;
+    }
+    t.tempo_changes.forEach((tc, idx) => {
+      const row = document.createElement('div');
+      row.className = 'tempo-change-row';
+      row.innerHTML = `
+        <span class="tc-idx-badge">${idx + 1}</span>
+        <input type="number" step="1" min="1" class="tc-bar" placeholder="小节" value="${tc.bar || ''}">
+        <span class="tc-sep">:</span>
+        <input type="number" step="0.1" min="1" class="tc-beat" placeholder="拍" value="${tc.beat || ''}">
+        <span class="tc-arrow">→</span>
+        <input type="number" step="0.1" min="1" class="tc-bpm" placeholder="BPM" value="${tc.bpm || ''}">
+        <button class="btn btn-icon btn-danger tc-del" title="删除">🗑</button>
+      `;
+      row.querySelector('.tc-bar').addEventListener('input', (e) => {
+        tc.bar = parseInt(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-beat').addEventListener('input', (e) => {
+        tc.beat = parseFloat(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-bpm').addEventListener('input', (e) => {
+        tc.bpm = parseFloat(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-del').addEventListener('click', () => {
+        t.tempo_changes.splice(idx, 1);
+        renderTempoChanges();
+        markDirty(card);
+      });
+      listEl.appendChild(row);
+    });
+  };
+  renderTempoChanges();
+  card.querySelector('[data-act="add-tempo-change"]').addEventListener('click', () => {
+    t.tempo_changes = t.tempo_changes || [];
+    const bpm = parseFloat($('[data-k="bpm"]', card).value) || 120;
+    const beatsPerBar = parseFloat($('[data-k="beats_per_bar"]', card).value) || 4;
+    
+    let nextBar = 5;
+    if (t.tempo_changes.length > 0) {
+      const maxBar = Math.max(...t.tempo_changes.map(tc => tc.bar || 1));
+      nextBar = maxBar + 4;
+    }
+    
+    t.tempo_changes.push({ bar: nextBar, beat: 1, bpm: bpm });
+    renderTempoChanges();
+    markDirty(card);
   });
 
   // 折叠 / 展开

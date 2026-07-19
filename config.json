@@ -4,16 +4,12 @@
       "id": "default",
       "label": "默认目录",
       "path": "./BGM"
-    },
-    {
-      "id": "d_5fbf56ae",
-      "label": "临时目录",
-      "path": "C:\\Users\\wangy\\Documents\\Adobe\\Audition\\22.0\\HOYO-MiX - 苍原的颂灵歌 Anthem of the Savannah\\Conformed Files"
     }
   ],
   "tracks": [
     {
       "name": "Waifu 4 Laifu",
+      "category": "Outcore",
       "filename": "01_35 - Waifu 4 Laifu.wav",
       "bgm_dir_id": "default",
       "bpm": 160,
@@ -32,73 +28,50 @@
       "jump_seg_start_bar": 0,
       "jump_seg_start_beat": 0,
       "jump_seg_end_bar": 0,
-      "jump_seg_end_beat": 0
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": []
     },
     {
-      "name": "孤独-野 (月球战斗曲)",
-      "filename": "孤独-野 - 赤羽曜 -  6.7 月球 战斗曲 453787090.flac",
+      "name": "アイドル",
+      "category": "ACG",
+      "filename": "YOASOBI - アイドル.mp3",
       "bgm_dir_id": "default",
-      "bpm": 125,
+      "bpm": 166,
       "beats_per_bar": 4,
       "audio_zero_bar": 1,
-      "audio_zero_beat": 1,
-      "loop_start_bar": 1,
+      "audio_zero_beat": 4,
+      "loop_start_bar": 2,
       "loop_start_beat": 1,
-      "loop_end_bar": 93,
-      "loop_end_beat": 1,
-      "fade_in_beats": 0,
-      "fade_out_beats": 0,
-      "fade_out_start_bar": 0,
-      "fade_out_start_beat": 0,
-      "loop_mode": "dual",
-      "jump_seg_start_bar": 0,
-      "jump_seg_start_beat": 0,
-      "jump_seg_end_bar": 0,
-      "jump_seg_end_beat": 0
-    },
-    {
-      "name": "バグ (かいりきベア)",
-      "filename": "かいりきベア - バグ.flac",
-      "bgm_dir_id": "default",
-      "bpm": 186,
-      "beats_per_bar": 4,
-      "audio_zero_bar": 1,
-      "audio_zero_beat": 1,
-      "loop_start_bar": 4,
-      "loop_start_beat": 1,
-      "loop_end_bar": 117,
+      "loop_end_bar": 142,
       "loop_end_beat": 1,
       "fade_in_beats": 0,
       "fade_out_beats": 0,
       "fade_out_start_bar": 0,
       "fade_out_start_beat": 0,
       "loop_mode": "single",
-      "jump_seg_start_bar": 52,
-      "jump_seg_start_beat": 1,
-      "jump_seg_end_bar": 54,
-      "jump_seg_end_beat": 1
-    },
-    {
-      "name": "苍原的颂灵歌 Anthem of the Savannah",
-      "filename": "HOYO-MiX - 苍原的颂灵歌 Anthem of the Savannah 44100 1.wav",
-      "bgm_dir_id": "d_5fbf56ae",
-      "bpm": 123,
-      "beats_per_bar": 4,
-      "audio_zero_bar": 1,
-      "audio_zero_beat": 4.6,
-      "loop_start_bar": 1,
-      "loop_start_beat": 1,
-      "loop_end_bar": 129,
-      "loop_end_beat": 1,
-      "fade_in_beats": 0,
-      "fade_out_beats": 0,
-      "fade_out_start_bar": 0,
-      "fade_out_start_beat": 0,
-      "loop_mode": "dual",
       "jump_seg_start_bar": 0,
       "jump_seg_start_beat": 0,
       "jump_seg_end_bar": 0,
-      "jump_seg_end_beat": 0
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [
+        {
+          "bar": 87,
+          "beat": 3,
+          "bpm": 150
+        },
+        {
+          "bar": 104,
+          "beat": 1,
+          "bpm": 158
+        },
+        {
+          "bar": 113,
+          "beat": 2,
+          "bpm": 166
+        }
+      ]
     }
   ]
 }

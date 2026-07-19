@@ -269,31 +269,78 @@ def _parse_karaoke_tokens(text):
 
 
 def parse_lrc_content(content):
-    """解析简化的 LRC 文本，支持普通时间戳、双语同时间戳以及逐字时间戳。"""
+    """解析简化的 LRC 文本，支持普通时间戳、双语同时间戳以及逐字时间戳。
+    保留空行作为间奏分隔，空行的 time_sec 使用下一行的时间戳。"""
     entries = []
     if not content:
         return entries
-    for raw_line in content.splitlines():
+    
+    lines = content.splitlines()
+    for i, raw_line in enumerate(lines):
         line = raw_line.strip()
+        
         if not line:
+            entries.append({
+                'time_sec': -1,
+                'text': '',
+                'karaoke': [],
+                'is_empty': True,
+            })
             continue
+        
         matches = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
         if not matches:
             continue
+        
         text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
         if not text:
+            # 只有时间标签没有文字的行（如 [8:1]），作为空行（间奏）处理
+            for bar_str, beat_str in matches:
+                bar = int(bar_str)
+                beat = float(beat_str)
+                abs_beat = (bar - 1) * beats_per_bar + beat
+                time_sec = beat_to_sec(abs_beat)
+                entries.append({
+                    'time_sec': max(0, time_sec),
+                    'text': '',
+                    'karaoke': [],
+                    'is_empty': True,
+                })
             continue
+        
         for minute, sec_text in matches:
             karaoke_tokens = _parse_karaoke_tokens(text)
             entries.append({
                 'time_sec': int(minute) * 60 + float(sec_text),
                 'text': re.sub(r'<\d+:\d+(?:\.\d+)?>', '', text).strip(),
                 'karaoke': karaoke_tokens,
+                'is_empty': False,
             })
+    
+    # 给没有时间标签的空行（time_sec < 0）设置 time_sec
+    for i in range(len(entries)):
+        if entries[i].get('is_empty') and entries[i].get('time_sec', -1) < 0:
+            prev_time = entries[i-1].get('time_sec', 0) if i > 0 else 0
+            # 找到下一个非空行
+            next_time = None
+            for j in range(i+1, len(entries)):
+                if not entries[j].get('is_empty') and entries[j].get('time_sec', -1) >= 0:
+                    next_time = entries[j]['time_sec']
+                    break
+            if next_time is not None and next_time > prev_time:
+                entries[i]['time_sec'] = prev_time + (next_time - prev_time) / 2
+            elif next_time is not None:
+                entries[i]['time_sec'] = next_time
+            else:
+                entries[i]['time_sec'] = prev_time + 5
 
-    entries.sort(key=lambda item: item['time_sec'])
+    entries.sort(key=lambda item: item.get('time_sec', 0))
+    
     merged = []
     for entry in entries:
+        if entry.get('is_empty'):
+            merged.append(entry)
+            continue
         if merged and abs(merged[-1].get('time_sec', 0) - entry.get('time_sec', 0)) < 1e-9:
             merged[-1]['translated_text'] = entry.get('text', '')
             if not merged[-1].get('karaoke') and entry.get('karaoke'):
@@ -303,42 +350,125 @@ def parse_lrc_content(content):
     return merged
 
 
-def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1):
+def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1, tempo_changes=None):
     """解析 BRC（Beat-based Lyrics）文本，格式为 [小节:拍]。
     根据 BPM 和零拍偏移配置将节拍时间转换为秒数。
-    支持原文译文并行：相同时间戳的连续歌词合并为原文+译文。"""
+    支持原文译文并行：相同时间戳的连续歌词合并为原文+译文。
+    支持分段变速：tempo_changes 为 [{bar, beat, bpm}] 格式的列表。"""
     entries = []
     if not content:
         return entries
-    beats_per_sec = bpm / 60.0
+    
     zero_abs_beat = (audio_zero_bar - 1) * beats_per_bar + audio_zero_beat
-    for raw_line in content.splitlines():
+    
+    tempo_changes = tempo_changes or []
+    tempo_list = []
+    for tc in tempo_changes:
+        if isinstance(tc, dict) and 'bar' in tc and 'beat' in tc and 'bpm' in tc:
+            abs_beat_val = (tc['bar'] - 1) * beats_per_bar + tc['beat']
+            tempo_list.append({'abs': abs_beat_val, 'bpm': tc['bpm']})
+    tempo_list.sort(key=lambda x: x['abs'])
+    
+    def beat_to_sec(abs_beat):
+        if not tempo_list:
+            beats_per_sec = bpm / 60.0
+            return (abs_beat - zero_abs_beat) / beats_per_sec
+        
+        remaining = abs_beat - zero_abs_beat
+        if remaining <= 0:
+            return 0
+        
+        time = 0
+        prev_bpm = bpm
+        prev_abs = zero_abs_beat
+        
+        for tc in tempo_list:
+            if abs_beat <= tc['abs']:
+                beats_in_segment = abs_beat - prev_abs
+                time += beats_in_segment / (prev_bpm / 60.0)
+                return max(0, time)
+            
+            beats_in_segment = tc['abs'] - prev_abs
+            time += beats_in_segment / (prev_bpm / 60.0)
+            prev_abs = tc['abs']
+            prev_bpm = tc['bpm']
+        
+        beats_in_segment = abs_beat - prev_abs
+        time += beats_in_segment / (prev_bpm / 60.0)
+        return max(0, time)
+    
+    lines = content.splitlines()
+    for i, raw_line in enumerate(lines):
         line = raw_line.strip()
+        
         if not line:
+            entries.append({
+                'time_sec': -1,
+                'text': '',
+                'karaoke': [],
+                'is_empty': True,
+            })
             continue
+        
         matches = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
         if not matches:
             continue
+        
         text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
         if not text:
+            # 只有时间标签没有文字的行（如 [8:1]），作为空行（间奏）处理
+            for bar_str, beat_str in matches:
+                bar = int(bar_str)
+                beat = float(beat_str)
+                abs_beat = (bar - 1) * beats_per_bar + beat
+                time_sec = beat_to_sec(abs_beat)
+                entries.append({
+                    'time_sec': max(0, time_sec),
+                    'text': '',
+                    'karaoke': [],
+                    'is_empty': True,
+                })
             continue
+        
         for bar_str, beat_str in matches:
             bar = int(bar_str)
             beat = float(beat_str)
             abs_beat = (bar - 1) * beats_per_bar + beat
-            time_sec = (abs_beat - zero_abs_beat) / beats_per_sec
+            time_sec = beat_to_sec(abs_beat)
             entries.append({
                 'time_sec': max(0, time_sec),
                 'text': text.strip(),
                 'karaoke': [],
+                'is_empty': False,
             })
 
-    entries.sort(key=lambda item: item['time_sec'])
+    # 给没有时间标签的空行（time_sec < 0）设置 time_sec
+    for i in range(len(entries)):
+        if entries[i].get('is_empty') and entries[i].get('time_sec', -1) < 0:
+            prev_time = entries[i-1].get('time_sec', 0) if i > 0 else 0
+            # 找到下一个非空行
+            next_time = None
+            for j in range(i+1, len(entries)):
+                if not entries[j].get('is_empty') and entries[j].get('time_sec', -1) >= 0:
+                    next_time = entries[j]['time_sec']
+                    break
+            if next_time is not None and next_time > prev_time:
+                entries[i]['time_sec'] = prev_time + (next_time - prev_time) / 2
+            elif next_time is not None:
+                entries[i]['time_sec'] = next_time
+            else:
+                entries[i]['time_sec'] = prev_time + 5
+
+    entries.sort(key=lambda item: item.get('time_sec', 0))
 
     merged = []
     i = 0
     while i < len(entries):
         current = entries[i]
+        if current.get('is_empty'):
+            merged.append(current)
+            i += 1
+            continue
         if i + 1 < len(entries) and abs(entries[i + 1]['time_sec'] - current['time_sec']) < 0.01:
             merged.append({
                 'time_sec': current['time_sec'],
@@ -673,25 +803,39 @@ def get_bgm(filename):
 @app.route('/api/lyrics/<path:filename>')
 def get_lyrics(filename):
     """返回与当前音频同名的歌词文件内容。若未找到则返回空列表。
-    支持 BRC（节拍歌词）格式，根据文件扩展名选择解析方式：.brc 使用节拍解析，.lrc 使用时间戳解析。"""
-    dir_id = request.args.get('dir_id') or ''
-    bpm = float(request.args.get('bpm', 120))
-    beats_per_bar = float(request.args.get('beats_per_bar', 4))
-    audio_zero_bar = float(request.args.get('audio_zero_bar', 1))
-    audio_zero_beat = float(request.args.get('audio_zero_beat', 1))
-    base = os.path.basename(filename)
-    full_path = resolve_lrc_file(base, dir_id=dir_id or None)
-    if not full_path or not os.path.isfile(full_path):
-        return jsonify({"ok": True, "data": {"lines": []}})
-    with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
-        content = fh.read()
-    _, ext = os.path.splitext(full_path)
-    if ext.lower() == '.brc':
-        lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
-                                   audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat)
-    else:
-        lines = parse_lrc_content(content)
-    return jsonify({"ok": True, "data": {"lines": lines}})
+    支持 BRC（节拍歌词）格式，根据文件扩展名选择解析方式：.brc 使用节拍解析，.lrc 使用时间戳解析。
+    支持分段变速：tempo_changes 参数为 JSON 数组格式。"""
+    try:
+        dir_id = request.args.get('dir_id') or ''
+        bpm = float(request.args.get('bpm', 120))
+        beats_per_bar = float(request.args.get('beats_per_bar', 4))
+        audio_zero_bar = float(request.args.get('audio_zero_bar', 1))
+        audio_zero_beat = float(request.args.get('audio_zero_beat', 1))
+        tempo_changes = []
+        tempo_changes_param = request.args.get('tempo_changes')
+        if tempo_changes_param:
+            try:
+                tempo_changes = json.loads(tempo_changes_param)
+            except (json.JSONDecodeError, TypeError):
+                tempo_changes = []
+        base = os.path.basename(filename)
+        full_path = resolve_lrc_file(base, dir_id=dir_id or None)
+        if not full_path or not os.path.isfile(full_path):
+            return jsonify({"ok": True, "data": {"lines": []}})
+        with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
+            content = fh.read()
+        _, ext = os.path.splitext(full_path)
+        if ext.lower() == '.brc':
+            lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
+                                       audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat,
+                                       tempo_changes=tempo_changes)
+        else:
+            lines = parse_lrc_content(content)
+        return jsonify({"ok": True, "data": {"lines": lines}})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route('/api/save-brc', methods=['POST'])

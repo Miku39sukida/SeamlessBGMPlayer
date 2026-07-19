@@ -7,6 +7,8 @@ const DLog = (...a) => { if (window.DEBUG_AUDIO) console.log('[AUDIO]', ...a); }
 let audioCtx = null;
 let masterGain = null;
 let audioBuffer = null;
+let audioCache = {};
+let audioLoading = {};
 let currentTrack = null;
 let nextTrack = null;
 let loopSchedulerTimer = null;
@@ -32,6 +34,7 @@ let jumpSegEnabled = false;
 let loopPhase = 'main';
 let lyricLines = [];
 let activeLyricIndex = -1;
+let tempoChanges = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -44,9 +47,54 @@ const fmtTime = (s) => {
     return `${m}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(3,'0')}`;
 };
 
+const getBpmAtTime = (sec) => {
+    for (let i = tempoChanges.length - 1; i >= 0; i--) {
+        const tc = tempoChanges[i];
+        if (sec >= tc.time_sec) {
+            return tc.bpm;
+        }
+    }
+    return activeTrackCfg?.bpm || 120;
+};
+
+const getBeatsPerSecAtTime = (sec) => {
+    return getBpmAtTime(sec) / 60.0;
+};
+
 const barBeat = (sec) => {
-    if (!activeTrackCfg || !beatsPerSec) return { bar: 0, beat: 0, abs: 0 };
-    const absBeatRaw = sec * beatsPerSec + zeroAbsBeat;
+    if (!activeTrackCfg) return { bar: 0, beat: 0, abs: 0 };
+    
+    if (tempoChanges.length === 0) {
+        const absBeatRaw = sec * beatsPerSec + zeroAbsBeat;
+        const currentBeatInt = Math.max(1, Math.floor(absBeatRaw));
+        const bpb = activeTrackCfg.beats_per_bar;
+        const b0 = currentBeatInt - 1;
+        const bar = Math.floor(b0 / bpb) + 1;
+        const beat = (b0 % bpb) + 1;
+        return { bar, beat, abs: absBeatRaw };
+    }
+    
+    let absBeatRaw = zeroAbsBeat;
+    let prevTime = 0;
+    let prevBeat = zeroAbsBeat;
+    let prevBpm = activeTrackCfg.bpm;
+    
+    for (const tc of tempoChanges) {
+        if (sec < tc.time_sec) {
+            const beatsElapsed = (sec - prevTime) * (prevBpm / 60);
+            absBeatRaw = prevBeat + beatsElapsed;
+            break;
+        }
+        prevBeat = tc.abs;
+        prevTime = tc.time_sec;
+        prevBpm = tc.bpm;
+        absBeatRaw = tc.abs;
+    }
+    if (sec >= prevTime) {
+        const beatsElapsed = (sec - prevTime) * (prevBpm / 60);
+        absBeatRaw = prevBeat + beatsElapsed;
+    }
+    
     const currentBeatInt = Math.max(1, Math.floor(absBeatRaw));
     const bpb = activeTrackCfg.beats_per_bar;
     const b0 = currentBeatInt - 1;
@@ -57,8 +105,49 @@ const barBeat = (sec) => {
 
 const secFromBarBeat = (bar, beat) => {
     if (!activeTrackCfg) return 0;
-    const abs = (bar - 1) * activeTrackCfg.beats_per_bar + beat;
-    return (abs - zeroAbsBeat) / beatsPerSec;
+    
+    const bpb = activeTrackCfg.beats_per_bar;
+    const targetAbs = (bar - 1) * bpb + beat;
+    const remaining = targetAbs - zeroAbsBeat;
+    
+    if (remaining <= 0) return 0;
+    
+    if (tempoChanges.length === 0) {
+        return remaining / beatsPerSec;
+    }
+    
+    let time = 0;
+    let prevBeat = zeroAbsBeat;
+    let prevBpm = activeTrackCfg.bpm;
+    
+    for (let i = 0; i < tempoChanges.length; i++) {
+        const tc = tempoChanges[i];
+        if (prevBpm <= 0) prevBpm = activeTrackCfg.bpm;
+        
+        if (tc.abs >= targetAbs) {
+            const beatsInSegment = targetAbs - prevBeat;
+            time += beatsInSegment * (60 / prevBpm);
+            const result = Math.max(0, time);
+            return isNaN(result) ? 0 : result;
+        }
+        
+        const beatsInSegment = tc.abs - prevBeat;
+        if (beatsInSegment > 0) {
+            time += beatsInSegment * (60 / prevBpm);
+        }
+        
+        prevBeat = tc.abs;
+        prevBpm = tc.bpm;
+    }
+    
+    if (prevBpm <= 0) prevBpm = activeTrackCfg.bpm;
+    const finalBeats = targetAbs - prevBeat;
+    if (finalBeats > 0) {
+        time += finalBeats * (60 / prevBpm);
+    }
+    
+    const result = Math.max(0, time);
+    return isNaN(result) ? 0 : result;
 };
 
 const ensureCtx = () => {
@@ -157,7 +246,10 @@ let _guardOnended = (track, label) => {
 };
 
 const playSegmentAt = (track, startOffsetSec, startAtCtx, opts = {}) => {
-    if (!audioBuffer) return false;
+    if (!audioBuffer) {
+        DLog('playSegmentAt: audioBuffer is null!');
+        return false;
+    }
     if (track.source) {
         try { track.source.onended = null; } catch(_){}
         try { if (!track.stopScheduled) { try { track.source.stop(); } catch(_){} } } catch(_){}
@@ -265,7 +357,7 @@ const scheduleNextLoop = () => {
     }
     if (distToEnd < 0.002) distToEnd = 0.002;
 
-    const lookAhead = Math.max(0.18, fadeOutS + 0.1);
+    const lookAhead = fadeOutS > 0.0002 ? Math.max(0.18, fadeOutS + 0.1) : 0.18;
     let triggerDelayMs = (distToEnd - lookAhead) * 1000;
     if (nearAudioEnd || distToEnd <= lookAhead + 0.001) triggerDelayMs = 1;
     if (triggerDelayMs < 1) triggerDelayMs = 1;
@@ -419,8 +511,13 @@ const doDualSwitch = () => {
         }
         if (nearAudioEnd) remainingToEnd = 0.05;
         if (remainingToEnd < 0.002) remainingToEnd = 0.002;
-        if (remainingToEnd < fadeOutS + 0.002) remainingToEnd = fadeOutS + 0.002;
-        if (remainingToEnd > 3600) remainingToEnd = fadeOutS + 0.18;
+        
+        if (fadeOutS > 0.0002) {
+            if (remainingToEnd < fadeOutS + 0.002) remainingToEnd = fadeOutS + 0.002;
+            if (remainingToEnd > 3600) remainingToEnd = fadeOutS + 0.18;
+        } else {
+            if (remainingToEnd > 3600) remainingToEnd = 0.18;
+        }
 
         const switchAtCtx = now + remainingToEnd;
 
@@ -518,13 +615,48 @@ const loadAudio = async (cfg) => {
     if (cfg && cfg.bgm_dir_id) {
         url += (url.indexOf('?') >= 0 ? '&' : '?') + 'dir_id=' + encodeURIComponent(cfg.bgm_dir_id);
     }
+    
+    const cacheKey = url;
+    
+    if (audioCache[cacheKey]) {
+        DLog(`cache hit: ${url}`);
+        audioBuffer = audioCache[cacheKey];
+        audioDurS = audioBuffer.duration;
+        DLog(`loaded from cache: dur=${audioDurS.toFixed(3)}s`);
+        return;
+    }
+    
+    if (audioLoading[cacheKey]) {
+        DLog(`waiting for loading: ${url}`);
+        return audioLoading[cacheKey];
+    }
+    
     DLog('loading:', url);
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error('Audio fetch failed: ' + resp.status);
-    const arr = await resp.arrayBuffer();
-    audioBuffer = await audioCtx.decodeAudioData(arr.slice(0));
-    audioDurS = audioBuffer.duration;
-    DLog(`loaded: dur=${audioDurS.toFixed(3)}s sr=${audioBuffer.sampleRate} ch=${audioBuffer.numberOfChannels} from dir=${cfg.bgm_dir_id || '(compat/default)'}`);
+    
+    const promise = (async () => {
+        try {
+            const resp = await fetch(url, { cache: 'force-cache' });
+            if (!resp.ok) throw new Error('Audio fetch failed: ' + resp.status);
+            
+            DLog('fetch complete, decoding audio...');
+            const arrayBuffer = await resp.arrayBuffer();
+            DLog(`arrayBuffer received: ${arrayBuffer.byteLength} bytes`);
+            
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+            audioCache[cacheKey] = audioBuffer;
+            audioDurS = audioBuffer.duration;
+            DLog(`loaded: dur=${audioDurS.toFixed(3)}s sr=${audioBuffer.sampleRate} ch=${audioBuffer.numberOfChannels} from dir=${cfg.bgm_dir_id || '(compat/default)'}`);
+        } catch (e) {
+            DLog('loadAudio error:', e.message);
+            delete audioLoading[cacheKey];
+            throw e;
+        } finally {
+            delete audioLoading[cacheKey];
+        }
+    })();
+    
+    audioLoading[cacheKey] = promise;
+    return promise;
 };
 
 const escapeHtml = (value) => String(value)
@@ -642,6 +774,7 @@ const _buildFlattenCharSlots = (karaoke, lineEndTime = null) => {
 
 const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
     if (!entry) return '<span class="lyric-empty">暂无歌词</span>';
+    if (entry.is_empty) return '<div class="lyric-empty-line"></div>';
     const karaoke = Array.isArray(entry.karaoke) ? entry.karaoke : [];
     let html = '';
     if (karaoke.length > 0) {
@@ -748,6 +881,9 @@ const loadLyrics = async (cfg) => {
         if (cfg && typeof cfg.audio_zero_beat === 'number') {
             params.push('audio_zero_beat=' + cfg.audio_zero_beat);
         }
+        if (cfg && Array.isArray(cfg.tempo_changes)) {
+            params.push('tempo_changes=' + encodeURIComponent(JSON.stringify(cfg.tempo_changes)));
+        }
         if (params.length > 0) {
             url += '?' + params.join('&');
         }
@@ -775,6 +911,54 @@ const applyTrackCfg = (cfg) => {
     beatsPerSec = cfg.bpm / 60.0;
     beatSec = 60.0 / cfg.bpm;
     zeroAbsBeat = (cfg.audio_zero_bar - 1) * cfg.beats_per_bar + cfg.audio_zero_beat;
+    
+    tempoChanges = [];
+    if (Array.isArray(cfg.tempo_changes)) {
+        const filtered = cfg.tempo_changes
+            .filter(tc => typeof tc.bar === 'number' && typeof tc.beat === 'number' && typeof tc.bpm === 'number')
+            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
+            .map(tc => {
+                const abs = (tc.bar - 1) * cfg.beats_per_bar + tc.beat;
+                return { ...tc, abs };
+            })
+            .sort((a, b) => a.abs - b.abs);
+        
+        let prevTime = 0;
+        let prevBeat = zeroAbsBeat;
+        let prevBpm = cfg.bpm;
+        
+        DLog(`TEMPO CALC: zeroAbsBeat=${zeroAbsBeat}, cfg.bpm=${cfg.bpm}, cfg.beats_per_bar=${cfg.beats_per_bar}`);
+        DLog(`TEMPO CALC: filtered count=${filtered.length}`);
+        
+        for (let i = 0; i < filtered.length; i++) {
+            const tc = filtered[i];
+            if (prevBpm <= 0) prevBpm = cfg.bpm;
+            
+            const beatsToTc = tc.abs - prevBeat;
+            DLog(`  TC[${i}]: ${tc.bar}:${tc.beat} abs=${tc.abs}, prevBeat=${prevBeat}, beatsToTc=${beatsToTc}, prevBpm=${prevBpm}`);
+            
+            if (beatsToTc <= 0) {
+                prevBeat = tc.abs;
+                prevBpm = tc.bpm;
+                DLog(`    SKIP (beatsToTc <= 0)`);
+                continue;
+            }
+            
+            const timeToTc = beatsToTc * (60 / prevBpm);
+            const tcTime = prevTime + timeToTc;
+            
+            DLog(`    → timeToTc=${timeToTc.toFixed(4)}, prevTime=${prevTime.toFixed(4)}, tcTime=${tcTime.toFixed(4)}`);
+            
+            if (!isNaN(tcTime) && tcTime >= 0) {
+                tempoChanges.push({ bar: tc.bar, beat: tc.beat, bpm: tc.bpm, time_sec: tcTime, abs: tc.abs });
+            }
+            
+            prevBeat = tc.abs;
+            prevTime = tcTime;
+            prevBpm = tc.bpm;
+        }
+    }
+    
     startS = secFromBarBeat(cfg.audio_zero_bar, cfg.audio_zero_beat);
     loopStartS = secFromBarBeat(cfg.loop_start_bar, cfg.loop_start_beat);
     loopEndS = secFromBarBeat(cfg.loop_end_bar, cfg.loop_end_beat);
@@ -807,7 +991,12 @@ const applyTrackCfg = (cfg) => {
     }
 
     DLog(`cfg: ${cfg.name} mode=${loopMode} bpm=${cfg.bpm} beat=${(beatSec*1000).toFixed(1)}ms`);
+    DLog(`  zeroAbsBeat=${zeroAbsBeat} beatsPerSec=${beatsPerSec}`);
     DLog(`  startS=${startS.toFixed(4)} loop=[${loopStartS.toFixed(3)} → ${loopEndS.toFixed(3)}] dur=${loopDurS.toFixed(3)}s`);
+    DLog(`  tempoChanges count=${tempoChanges.length}`);
+    tempoChanges.forEach((tc, i) => {
+        DLog(`    tc[${i}]: ${tc.bar}:${tc.beat} → ${tc.bpm} BPM, time_sec=${tc.time_sec.toFixed(4)}, abs=${tc.abs}`);
+    });
     if (jumpSegEnabled) {
         DLog(`  jump_seg=[${jumpSegStartS.toFixed(3)} → ${jumpSegEndS.toFixed(3)}] (dur=${(jumpSegEndS-jumpSegStartS).toFixed(3)}s) ENABLED`);
     } else {
@@ -818,49 +1007,91 @@ const applyTrackCfg = (cfg) => {
 };
 
 const playTrack = async (idx) => {
-    stopAll();
-    const cfg = config.tracks[idx];
-    if (!cfg) return;
-    expandCategoryForTrack(idx, true);
-    applyTrackCfg(cfg);
-    const lyricEl = $('lyricText');
-    if (lyricEl) {
-        lyricEl.classList.remove('font-teyvat');
-    lyricEl.style.fontFamily = '';
-    if (cfg.font_face === 'teyvat') {
-        lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
-    }
-    }
-    loopPhase = 'main';
-    updateInfoPanel(idx);
-    await loadLyrics(cfg);
-    await loadAudio(cfg);
-    renderMarkers();
-    ensureCtx();
-
-    currentTrack = createTrack('A');
-    nextTrack = createTrack('B');
-
-    const now = audioCtx.currentTime + 0.05;
-    const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
-    playSegmentAt(currentTrack, startS, now, {
-        enableLoop: false,
-        initialGain,
-    });
-
-    if (fadeInS > 0.0002 && currentTrack.gain) {
+    try {
+        DLog(`playTrack START: idx=${idx}`);
+        stopAll();
+        const cfg = config.tracks[idx];
+        if (!cfg) {
+            DLog('playTrack: no cfg, abort');
+            return;
+        }
+        DLog(`playTrack: cfg.name=${cfg.name}`);
+        expandCategoryForTrack(idx, true);
+        applyTrackCfg(cfg);
+        DLog('playTrack: applyTrackCfg done');
+        
+        const lyricEl = $('lyricText');
+        if (lyricEl) {
+            lyricEl.classList.remove('font-teyvat');
+            lyricEl.style.fontFamily = '';
+            if (cfg.font_face === 'teyvat') {
+                lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
+            }
+        }
+        
+        loopPhase = 'main';
+        updateInfoPanel(idx);
+        
+        DLog('playTrack: loading lyrics...');
+        await loadLyrics(cfg);
+        DLog('playTrack: lyrics loaded');
+        
+        DLog('playTrack: loading audio...');
+        await loadAudio(cfg);
+        DLog('playTrack: audio loaded, audioBuffer=' + !!audioBuffer);
+        
         try {
-            const g0 = Math.max(audioCtx.currentTime + 0.001, now);
-            currentTrack.gain.gain.cancelScheduledValues(g0);
-            currentTrack.gain.gain.setValueAtTime(0.0, g0);
-            currentTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
-            currentTrack.envelopeEndsAtCtx = Math.max(currentTrack.envelopeEndsAtCtx || 0, g0 + fadeInS);
-            DLog(`initial fade-in: ${(fadeInS*1000).toFixed(0)}ms`);
-        } catch(e) { DLog('initial fade-in err', e.message); }
-    }
+            renderMarkers();
+            DLog('renderMarkers completed');
+        } catch (e) {
+            DLog('renderMarkers ERROR:', e.message);
+        }
+        
+        ensureCtx();
+        
+        DLog(`playTrack: after loadAudio, startS=${startS.toFixed(4)}, loopStartS=${loopStartS.toFixed(4)}, loopEndS=${loopEndS.toFixed(4)}`);
 
-    scheduleNextLoop();
-    startUiTicker();
+        currentTrack = createTrack('A');
+        nextTrack = createTrack('B');
+
+        const ctxCurrentTime = audioCtx ? audioCtx.currentTime : 0;
+        const now = ctxCurrentTime + 0.05;
+        const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
+        
+        DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
+        DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx?.state}`);
+        
+        const playSuccess = playSegmentAt(currentTrack, startS, now, {
+            enableLoop: false,
+            initialGain,
+        });
+        
+        if (!playSuccess) {
+            DLog('playTrack: playSegmentAt returned false!');
+            if (!audioBuffer) DLog('  - audioBuffer is null');
+            if (!audioCtx) DLog('  - audioCtx is null');
+        } else {
+            DLog('playTrack: playSegmentAt SUCCESS');
+        }
+
+        if (fadeInS > 0.0002 && currentTrack.gain) {
+            try {
+                const g0 = Math.max(audioCtx.currentTime + 0.001, now);
+                currentTrack.gain.gain.cancelScheduledValues(g0);
+                currentTrack.gain.gain.setValueAtTime(0.0, g0);
+                currentTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                currentTrack.envelopeEndsAtCtx = Math.max(currentTrack.envelopeEndsAtCtx || 0, g0 + fadeInS);
+                DLog(`initial fade-in: ${(fadeInS*1000).toFixed(0)}ms`);
+            } catch(e) { DLog('initial fade-in err', e.message); }
+        }
+
+        scheduleNextLoop();
+        startUiTicker();
+        DLog('playTrack: COMPLETE');
+    } catch (e) {
+        DLog('playTrack FATAL ERROR:', e.message, e.stack);
+        console.error('playTrack error:', e);
+    }
 };
 
 const stopAll = () => {
@@ -869,24 +1100,36 @@ const stopAll = () => {
     cancelAnimationFrame(rafId);
     rafId = null;
     if (currentTrack) {
-        try { if (currentTrack.source && !currentTrack.stopScheduled) {
-            try { currentTrack.gain?.gain?.cancelScheduledValues(audioCtx?.currentTime || 0); } catch(_){}
-            if (currentTrack.gain && audioCtx) {
-                try { currentTrack.gain.gain.setValueAtTime(currentTrack.gain.gain.value, audioCtx.currentTime); } catch(_){}
-                try {
-                    const endAt = audioCtx.currentTime + 0.03;
-                    currentTrack.gain.gain.linearRampToValueAtTime(0, endAt);
-                    currentTrack.envelopeEndsAtCtx = Math.max(currentTrack.envelopeEndsAtCtx || 0, endAt);
-                } catch(_){}
+        try {
+            if (currentTrack.source) {
+                try { currentTrack.source.stop(); } catch(_){}
+                try { currentTrack.source.disconnect(); } catch(_){}
             }
-            scheduleStopWithEnvelope(currentTrack, (audioCtx?.currentTime || 0) + 0.04);
-        } else safeCleanupTrack(currentTrack); } catch(_){ safeCleanupTrack(currentTrack); }
+            if (currentTrack.gain) {
+                try { currentTrack.gain.disconnect(); } catch(_){}
+            }
+        } catch(_) {}
     }
     if (nextTrack) {
-        safeCleanupTrack(nextTrack);
+        try {
+            if (nextTrack.source) {
+                try { nextTrack.source.stop(); } catch(_){}
+                try { nextTrack.source.disconnect(); } catch(_){}
+            }
+            if (nextTrack.gain) {
+                try { nextTrack.gain.disconnect(); } catch(_){}
+            }
+        } catch(_) {}
     }
     currentTrack = null;
     nextTrack = null;
+    audioBuffer = null;
+    
+    if (audioCtx) {
+        try { audioCtx.close(); } catch(_){}
+        audioCtx = null;
+        masterGain = null;
+    }
 };
 
 
@@ -1205,10 +1448,59 @@ const toggleDrawer = () => {
 };
 
 const secFromBarBeatWrap = (cfg, bar, beat) => {
-    const bps = cfg.bpm / 60.0;
-    const zab = (cfg.audio_zero_bar - 1) * cfg.beats_per_bar + cfg.audio_zero_beat;
-    const abs = (bar - 1) * cfg.beats_per_bar + beat;
-    return (abs - zab) / bps;
+    const bpb = cfg.beats_per_bar || 4;
+    const zab = (cfg.audio_zero_bar - 1) * bpb + cfg.audio_zero_beat;
+    const targetAbs = (bar - 1) * bpb + beat;
+    const remaining = targetAbs - zab;
+    
+    if (remaining <= 0) return 0;
+    
+    if (!Array.isArray(cfg.tempo_changes) || cfg.tempo_changes.length === 0) {
+        const bps = cfg.bpm / 60.0;
+        if (bps <= 0) return remaining / (120 / 60.0);
+        return remaining / bps;
+    }
+    
+    const filtered = cfg.tempo_changes
+        .filter(tc => typeof tc.bar === 'number' && typeof tc.beat === 'number' && typeof tc.bpm === 'number')
+        .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
+        .map(tc => {
+            const abs = (tc.bar - 1) * bpb + tc.beat;
+            return { ...tc, abs };
+        })
+        .sort((a, b) => a.abs - b.abs);
+    
+    let time = 0;
+    let prevBeat = zab;
+    let prevBpm = cfg.bpm;
+    
+    for (const tc of filtered) {
+        if (prevBpm <= 0) prevBpm = cfg.bpm;
+        
+        if (tc.abs >= targetAbs) {
+            const beatsInSegment = targetAbs - prevBeat;
+            time += beatsInSegment * (60 / prevBpm);
+            const result = Math.max(0, time);
+            return isNaN(result) ? 0 : result;
+        }
+        
+        const beatsInSegment = tc.abs - prevBeat;
+        if (beatsInSegment > 0) {
+            time += beatsInSegment * (60 / prevBpm);
+        }
+        
+        prevBeat = tc.abs;
+        prevBpm = tc.bpm;
+    }
+    
+    if (prevBpm <= 0) prevBpm = cfg.bpm;
+    const finalBeats = targetAbs - prevBeat;
+    if (finalBeats > 0) {
+        time += finalBeats * (60 / prevBpm);
+    }
+    
+    const result = Math.max(0, time);
+    return isNaN(result) ? 0 : result;
 };
 
 const init = async () => {

@@ -9,6 +9,7 @@ class BeatCalculator {
         this.dirs = [];
         this.files = [];
         this.allFiles = [];
+        this.tempoChanges = [];
 
         this.audio.addEventListener('ended', () => this.stop());
         this.audio.addEventListener('error', (e) => {
@@ -36,6 +37,7 @@ class BeatCalculator {
         $bc('#beatCalcDir').addEventListener('change', () => this.loadFiles());
         $bc('#beatCalcFile').addEventListener('change', () => this.loadAudio());
         $bc('#beatCalcFileSearch').addEventListener('input', () => this.renderFileList());
+        $bc('#beatCalcAddTempoChange').addEventListener('click', () => this.addTempoChange());
 
         const header = $bc('.beat-calc-header');
         let isDragging = false;
@@ -306,16 +308,46 @@ class BeatCalculator {
         const zeroBar = parseInt($bc('#beatCalcZeroBar').value) || 1;
         const zeroBeat = parseFloat($bc('#beatCalcZeroBeat').value) || 1;
 
-        const beatsPerSec = bpm / 60;
         const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-        const absBeatRaw = currentTime * beatsPerSec + zeroAbsBeat;
+        
+        const sortedTempoChanges = [...this.tempoChanges]
+            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
+            .map(tc => {
+                const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
+                return { ...tc, abs };
+            })
+            .sort((a, b) => a.abs - b.abs);
 
-        const currentBeatInt = Math.max(1, Math.floor(absBeatRaw));
-        const barNum = Math.floor((currentBeatInt - 1) / beatsPerBar) + 1;
-        const beatInBar = ((currentBeatInt - 1) % beatsPerBar) + 1;
+        let absBeatRaw = zeroAbsBeat;
+        let prevTime = 0;
+        let prevBeat = zeroAbsBeat;
+        let prevBpm = bpm;
+
+        for (const tc of sortedTempoChanges) {
+            const beatsToTc = tc.abs - prevBeat;
+            const timeToTc = beatsToTc * (60 / prevBpm);
+            const tcTime = prevTime + timeToTc;
+
+            if (currentTime < tcTime) {
+                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
+                absBeatRaw = prevBeat + beatsElapsed;
+                break;
+            }
+            prevBeat = tc.abs;
+            prevTime = tcTime;
+            prevBpm = tc.bpm;
+            absBeatRaw = tc.abs;
+        }
+        if (currentTime >= prevTime) {
+            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
+            absBeatRaw = prevBeat + beatsElapsed;
+        }
+
+        const barNum = Math.max(1, Math.floor((absBeatRaw - 1) / beatsPerBar) + 1);
+        const beatInBar = absBeatRaw - (barNum - 1) * beatsPerBar;
 
         const barStr = barNum;
-        const beatStr = beatInBar.toFixed(1);
+        const beatStr = beatInBar.toFixed(2);
 
         $bc('#beatCalcBarValue').textContent = `${barStr}:${beatStr} (小节:拍)`;
     }
@@ -350,6 +382,87 @@ class BeatCalculator {
     restore() {
         $bc('#beatCalcMinimized').style.display = 'none';
         $bc('#beatCalcWindow').classList.add('show');
+    }
+
+    saveTempoChangesToInput() {
+        $bc('#beatCalcTempoChanges').value = JSON.stringify(this.tempoChanges);
+    }
+
+    addTempoChange() {
+        const bpm = parseFloat($bc('#beatCalcBpm').value) || 120;
+        const beatsPerBar = parseInt($bc('#beatCalcBeatsPerBar').value) || 4;
+        
+        let nextBar = 5;
+        if (this.tempoChanges.length > 0) {
+            const maxBar = Math.max(...this.tempoChanges.map(tc => tc.bar || 1));
+            nextBar = maxBar + 4;
+        }
+        
+        this.tempoChanges.push({ bar: nextBar, beat: 1, bpm: bpm });
+        this.saveTempoChangesToInput();
+        this.renderTempoChanges();
+    }
+
+    removeTempoChange(index) {
+        this.tempoChanges.splice(index, 1);
+        this.saveTempoChangesToInput();
+        this.renderTempoChanges();
+    }
+
+    updateTempoChangeField(index, field, value) {
+        if (this.tempoChanges[index]) {
+            this.tempoChanges[index][field] = value;
+            this.saveTempoChangesToInput();
+        }
+    }
+
+    renderTempoChanges() {
+        const listEl = $bc('#beatCalcTempoChangesList');
+        if (!listEl) return;
+        
+        const sortedWithIdx = this.tempoChanges.map((tc, idx) => ({ ...tc, __idx: idx }))
+            .sort((a, b) => {
+                if (a.bar !== b.bar) return a.bar - b.bar;
+                return a.beat - b.beat;
+            });
+
+        if (sortedWithIdx.length === 0) {
+            listEl.innerHTML = '<div class="beat-calc-tc-empty">暂无变速规则，点击上方「＋ 添加变速规则」按钮新增</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        sortedWithIdx.forEach((tc) => {
+            const originalIdx = tc.__idx;
+            const row = document.createElement('div');
+            row.className = 'beat-calc-tc-row';
+            row.dataset.idx = originalIdx;
+            row.innerHTML = `
+                <span class="beat-calc-tc-idx">${tc.__idx + 1}</span>
+                <input type="number" step="1" min="1" class="beat-calc-tc-bar" placeholder="小节" value="${tc.bar || ''}">
+                <span class="beat-calc-tc-sep">:</span>
+                <input type="number" step="0.1" min="1" class="beat-calc-tc-beat" placeholder="拍" value="${tc.beat || ''}">
+                <span class="beat-calc-tc-arrow">→</span>
+                <input type="number" step="0.1" min="1" class="beat-calc-tc-bpm" placeholder="BPM" value="${tc.bpm || ''}">
+                <button class="beat-calc-tc-del" title="删除">🗑</button>
+            `;
+            row.querySelector('.beat-calc-tc-bar').addEventListener('input', (e) => {
+                const val = parseInt(e.target.value) || 0;
+                this.updateTempoChangeField(originalIdx, 'bar', val);
+            });
+            row.querySelector('.beat-calc-tc-beat').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateTempoChangeField(originalIdx, 'beat', val);
+            });
+            row.querySelector('.beat-calc-tc-bpm').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateTempoChangeField(originalIdx, 'bpm', val);
+            });
+            row.querySelector('.beat-calc-tc-del').addEventListener('click', () => {
+                this.removeTempoChange(originalIdx);
+            });
+            listEl.appendChild(row);
+        });
     }
 }
 
