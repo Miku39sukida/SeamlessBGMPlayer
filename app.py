@@ -506,7 +506,7 @@ def resolve_lrc_file(filename, dir_id=None, cfg=None):
     if ext.lower() in ('.lrc', '.brc'):
         candidates = [base_name]
     else:
-        candidates = [f'{stem}.brc', f'{stem}.lrc', base_name]
+        candidates = [f'{stem}.brc', f'{stem}.lrc']
     for candidate in candidates:
         full_path = os.path.join(audio_dir, candidate)
         if os.path.isfile(full_path):
@@ -807,6 +807,13 @@ def get_lyrics(filename):
     支持分段变速：tempo_changes 参数为 JSON 数组格式。"""
     try:
         dir_id = request.args.get('dir_id') or ''
+        base = os.path.basename(filename)
+        full_path = resolve_lrc_file(base, dir_id=dir_id or None)
+        if not full_path or not os.path.isfile(full_path):
+            return jsonify({"ok": True, "data": {"lines": []}})
+        _, ext = os.path.splitext(full_path)
+        if ext.lower() not in ('.lrc', '.brc'):
+            return jsonify({"ok": True, "data": {"lines": []}})
         bpm = float(request.args.get('bpm', 120))
         beats_per_bar = float(request.args.get('beats_per_bar', 4))
         audio_zero_bar = float(request.args.get('audio_zero_bar', 1))
@@ -818,13 +825,8 @@ def get_lyrics(filename):
                 tempo_changes = json.loads(tempo_changes_param)
             except (json.JSONDecodeError, TypeError):
                 tempo_changes = []
-        base = os.path.basename(filename)
-        full_path = resolve_lrc_file(base, dir_id=dir_id or None)
-        if not full_path or not os.path.isfile(full_path):
-            return jsonify({"ok": True, "data": {"lines": []}})
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
             content = fh.read()
-        _, ext = os.path.splitext(full_path)
         if ext.lower() == '.brc':
             lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
                                        audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat,

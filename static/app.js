@@ -35,6 +35,9 @@ let loopPhase = 'main';
 let lyricLines = [];
 let activeLyricIndex = -1;
 let tempoChanges = [];
+// 加载状态锁
+let isLoadingTrack = false;
+let loadingTrackIdx = -1;
 
 const $ = (id) => document.getElementById(id);
 
@@ -156,8 +159,15 @@ const ensureCtx = () => {
         masterGain = audioCtx.createGain();
         masterGain.gain.value = 1.0;
         masterGain.connect(audioCtx.destination);
+        DLog('ensureCtx: created new AudioContext');
     }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(e => DLog('ensureCtx: resume failed', e.message));
+    }
+    if (audioCtx.state === 'closed') {
+        audioCtx = null;
+        return ensureCtx();
+    }
 };
 
 const createTrack = (label) => ({
@@ -859,10 +869,13 @@ const updateLyricDisplay = () => {
     setLyricText(line || null, s, lineEndTime);
 };
 
-const loadLyrics = async (cfg) => {
-    lyricLines = [];
-    activeLyricIndex = -1;
-    setLyricText(null, 0);
+const loadLyrics = async (cfg, applyNow = true) => {
+    // applyNow=false 时只加载数据，不更新UI（用于后台预加载）
+    if (applyNow) {
+        lyricLines = [];
+        activeLyricIndex = -1;
+        setLyricText(null, 0);
+    }
     try {
         let url = `/api/lyrics/${encodeURIComponent(cfg.filename)}`;
         const params = [];
@@ -887,22 +900,31 @@ const loadLyrics = async (cfg) => {
         if (params.length > 0) {
             url += '?' + params.join('&');
         }
-        const resp = await fetch(url);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (!resp.ok) throw new Error('Lyrics fetch failed: ' + resp.status);
         const data = await resp.json();
         if (data.ok && Array.isArray(data.data?.lines)) {
-            lyricLines = data.data.lines;
-            if (lyricLines.length > 0) {
-                updateLyricDisplay();
-            } else {
-                setLyricText(null, 0);
+            const loadedLines = data.data.lines;
+            if (applyNow) {
+                lyricLines = loadedLines;
+                if (lyricLines.length > 0) {
+                    updateLyricDisplay();
+                } else {
+                    setLyricText(null, 0);
+                }
             }
-        } else {
+            return loadedLines;
+        } else if (applyNow) {
             setLyricText(null, 0);
         }
+        return [];
     } catch (e) {
         DLog('loadLyrics failed:', e.message);
-        setLyricText(null, 0);
+        if (applyNow) setLyricText(null, 0);
+        return [];
     }
 };
 
@@ -1007,9 +1029,23 @@ const applyTrackCfg = (cfg) => {
 };
 
 const playTrack = async (idx) => {
+    // 加载锁：正在加载时禁止再次点击
+    if (isLoadingTrack) {
+        DLog(`playTrack: loading in progress (idx=${loadingTrackIdx}), ignore click idx=${idx}`);
+        return;
+    }
+    // 同曲不重复播放
+    if (currentTrack && activeTrackCfg && config.tracks[idx] === activeTrackCfg) {
+        DLog(`playTrack: same track, ignore`);
+        return;
+    }
+    
+    isLoadingTrack = true;
+    loadingTrackIdx = idx;
+    updateLoadingUI(true, idx);
+    
     try {
         DLog(`playTrack START: idx=${idx}`);
-        stopAll();
         const cfg = config.tracks[idx];
         if (!cfg) {
             DLog('playTrack: no cfg, abort');
@@ -1017,9 +1053,8 @@ const playTrack = async (idx) => {
         }
         DLog(`playTrack: cfg.name=${cfg.name}`);
         expandCategoryForTrack(idx, true);
-        applyTrackCfg(cfg);
-        DLog('playTrack: applyTrackCfg done');
         
+        // 后台加载歌词和音频（不停止当前播放）
         const lyricEl = $('lyricText');
         if (lyricEl) {
             lyricEl.classList.remove('font-teyvat');
@@ -1029,16 +1064,56 @@ const playTrack = async (idx) => {
             }
         }
         
+        DLog('playTrack: loading lyrics (background)...');
+        const loadedLyricLines = await loadLyrics(cfg, false);
+        DLog('playTrack: lyrics loaded');
+        
+        DLog('playTrack: loading audio (background)...');
+        await loadAudio(cfg);
+        DLog('playTrack: audio loaded, audioBuffer=' + !!audioBuffer);
+        
+        // 竞态条件检查：如果用户已经点击了其他歌曲，放弃当前加载
+        if (loadingTrackIdx !== idx) {
+            DLog(`playTrack: ABORT - user switched track (current loadingTrackIdx=${loadingTrackIdx}, this idx=${idx})`);
+            return;
+        }
+        
+        // 加载完成，淡出旧曲目并切换
+        const wasPlaying = !!(currentTrack && currentTrack.source);
+        if (wasPlaying) {
+            DLog('playTrack: fading out previous track...');
+            fadeOutCurrentTrack(0.3); // 0.3秒淡出
+            // 等待淡出完成
+            await new Promise(r => setTimeout(r, 300));
+        }
+        
+        // 保存加载好的 audioBuffer 和 audioDurS（stopAll 会清空它们）
+        const loadedBuffer = audioBuffer;
+        const loadedDurS = audioDurS;
+        
+        // 现在停止旧曲目并应用新配置（等待close完成）
+        await stopAll();
+        
+        // 恢复加载好的 audioBuffer
+        audioBuffer = loadedBuffer;
+        audioDurS = loadedDurS;
+        
+        // 应用歌词（此时才更新UI）
+        lyricLines = loadedLyricLines || [];
+        activeLyricIndex = -1;
+        
+        applyTrackCfg(cfg);
+        DLog('playTrack: applyTrackCfg done');
+        
         loopPhase = 'main';
         updateInfoPanel(idx);
         
-        DLog('playTrack: loading lyrics...');
-        await loadLyrics(cfg);
-        DLog('playTrack: lyrics loaded');
-        
-        DLog('playTrack: loading audio...');
-        await loadAudio(cfg);
-        DLog('playTrack: audio loaded, audioBuffer=' + !!audioBuffer);
+        // 更新歌词显示
+        if (lyricLines.length > 0) {
+            updateLyricDisplay();
+        } else {
+            setLyricText(null, 0);
+        }
         
         try {
             renderMarkers();
@@ -1049,17 +1124,26 @@ const playTrack = async (idx) => {
         
         ensureCtx();
         
+        if (!audioCtx) {
+            DLog('playTrack: FATAL - audioCtx is null after ensureCtx!');
+            return;
+        }
+        if (!audioBuffer) {
+            DLog('playTrack: FATAL - audioBuffer is null!');
+            return;
+        }
+        
         DLog(`playTrack: after loadAudio, startS=${startS.toFixed(4)}, loopStartS=${loopStartS.toFixed(4)}, loopEndS=${loopEndS.toFixed(4)}`);
 
         currentTrack = createTrack('A');
         nextTrack = createTrack('B');
 
-        const ctxCurrentTime = audioCtx ? audioCtx.currentTime : 0;
+        const ctxCurrentTime = audioCtx.currentTime;
         const now = ctxCurrentTime + 0.05;
         const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
         
         DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
-        DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx?.state}`);
+        DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
         
         const playSuccess = playSegmentAt(currentTrack, startS, now, {
             enableLoop: false,
@@ -1068,8 +1152,7 @@ const playTrack = async (idx) => {
         
         if (!playSuccess) {
             DLog('playTrack: playSegmentAt returned false!');
-            if (!audioBuffer) DLog('  - audioBuffer is null');
-            if (!audioCtx) DLog('  - audioCtx is null');
+            return;
         } else {
             DLog('playTrack: playSegmentAt SUCCESS');
         }
@@ -1091,10 +1174,50 @@ const playTrack = async (idx) => {
     } catch (e) {
         DLog('playTrack FATAL ERROR:', e.message, e.stack);
         console.error('playTrack error:', e);
+    } finally {
+        isLoadingTrack = false;
+        loadingTrackIdx = -1;
+        updateLoadingUI(false, idx);
     }
 };
 
-const stopAll = () => {
+// 淡出当前播放的曲目
+const fadeOutCurrentTrack = (durationSec) => {
+    if (!currentTrack || !currentTrack.gain || !audioCtx) return;
+    try {
+        const now = audioCtx.currentTime;
+        const curGain = currentTrack.gain.gain.value;
+        currentTrack.gain.gain.cancelScheduledValues(now);
+        currentTrack.gain.gain.setValueAtTime(curGain, now);
+        currentTrack.gain.gain.linearRampToValueAtTime(0.0, now + durationSec);
+        DLog(`fadeOutCurrentTrack: ${durationSec}s ramp from ${curGain.toFixed(3)} to 0`);
+    } catch(e) { DLog('fadeOutCurrentTrack err:', e.message); }
+};
+
+// 加载状态UI反馈
+const updateLoadingUI = (loading, idx) => {
+    const list = $('trackList');
+    if (!list) return;
+    if (loading) {
+        list.classList.add('loading');
+        // 高亮正在加载的曲目
+        const items = list.querySelectorAll('.track-item');
+        items.forEach((item, i) => {
+            const itemIdx = parseInt(item.querySelector('.play-btn')?.dataset?.idx || '-1', 10);
+            if (itemIdx === idx) {
+                item.classList.add('loading-item');
+            } else {
+                item.classList.remove('loading-item');
+            }
+        });
+    } else {
+        list.classList.remove('loading');
+        const items = list.querySelectorAll('.track-item');
+        items.forEach(item => item.classList.remove('loading-item'));
+    }
+};
+
+const stopAll = async () => {
     clearTimeout(loopSchedulerTimer);
     loopSchedulerTimer = null;
     cancelAnimationFrame(rafId);
@@ -1126,7 +1249,9 @@ const stopAll = () => {
     audioBuffer = null;
     
     if (audioCtx) {
-        try { audioCtx.close(); } catch(_){}
+        try {
+            await audioCtx.close();
+        } catch(_){}
         audioCtx = null;
         masterGain = null;
     }
@@ -1513,7 +1638,7 @@ const init = async () => {
     }
     renderTrackList();
 
-    $('stopBtn').addEventListener('click', stopAll);
+    $('stopBtn').addEventListener('click', async () => await stopAll());
 
     $('volumeSlider').addEventListener('input', (e) => {
         const v = parseInt(e.target.value);

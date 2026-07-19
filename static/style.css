@@ -862,3 +862,29 @@ body.drawer-open .drawer-overlay {
     background: var(--primary-dark);
     transform: scale(1.05);
 }
+
+/* 加载状态样式 */
+.track-list.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.track-item.loading-item {
+    background: rgba(255, 180, 210, 0.2);
+    pointer-events: none;
+}
+
+.track-item.loading-item .play-btn {
+    background: #aaa;
+    pointer-events: none;
+    animation: pulse-loading 1.2s ease-in-out infinite;
+}
+
+.track-item.loading-item .play-btn::after {
+    content: '';
+}
+
+@keyframes pulse-loading {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.08); }
+}
