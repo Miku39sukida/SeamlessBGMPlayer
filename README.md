@@ -100,7 +100,8 @@
 ### 安装 & 启动
 ```bash
 # 1. 克隆或解压项目后进入目录
-cd 无缝循环（交叉播放）
+git clone https://github.com/Miku39sukida/SeamlessBGMPlayer.git 无缝循环播放器
+cd 无缝循环播放器
 
 # 2. 安装依赖
 pip install flask
