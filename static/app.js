@@ -38,6 +38,10 @@ let tempoChanges = [];
 // 加载状态锁
 let isLoadingTrack = false;
 let loadingTrackIdx = -1;
+// 循环跳转过渡位置（防止UI先跳到开头）
+let transitionPos = null;
+let transitionBase = null;
+let transitionStartTime = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,20 +52,6 @@ const fmtTime = (s) => {
     const sec = Math.floor(s % 60);
     const ms = Math.floor((s - Math.floor(s)) * 1000);
     return `${m}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(3,'0')}`;
-};
-
-const getBpmAtTime = (sec) => {
-    for (let i = tempoChanges.length - 1; i >= 0; i--) {
-        const tc = tempoChanges[i];
-        if (sec >= tc.time_sec) {
-            return tc.bpm;
-        }
-    }
-    return activeTrackCfg?.bpm || 120;
-};
-
-const getBeatsPerSecAtTime = (sec) => {
-    return getBpmAtTime(sec) / 60.0;
 };
 
 const barBeat = (sec) => {
@@ -321,8 +311,21 @@ const playSegmentAt = (track, startOffsetSec, startAtCtx, opts = {}) => {
 };
 
 const currentPlaySec = () => {
-    if (!currentTrack || !currentTrack.source || audioCtx.currentTime < currentTrack.startedAtCtx) return 0;
-    const raw = audioCtx.currentTime - currentTrack.startedAtCtx + currentTrack.startOffset;
+    if (!currentTrack || !currentTrack.source) return 0;
+    const ctxNow = audioCtx.currentTime;
+    if (ctxNow < currentTrack.startedAtCtx) {
+        if (transitionBase != null && transitionStartTime != null) {
+            return transitionBase + (ctxNow - transitionStartTime);
+        }
+        if (transitionPos != null) {
+            return transitionPos;
+        }
+        return 0;
+    }
+    transitionPos = null;
+    transitionBase = null;
+    transitionStartTime = null;
+    const raw = ctxNow - currentTrack.startedAtCtx + currentTrack.startOffset;
     if (loopMode === 'single' && loopDurS > 0 && raw >= loopStartS) {
         const into = (raw - loopStartS) % loopDurS;
         return loopStartS + into;
@@ -490,6 +493,9 @@ const doSingleJump = () => {
         loopPhase = nextPhase;
         DLog(`SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''} phase ${prevPhase}→${nextPhase}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s switchAt=${switchAtCtx.toFixed(4)} xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)}`);
         safeCleanupTrack(prevTrack);
+        transitionBase = raw;
+        transitionStartTime = audioCtx.currentTime;
+        transitionPos = targetOffset;
         currentTrack = newTrack;
     } catch (e) {
         DLog('doSingleJump FATAL:', e.message, e.stack);
@@ -608,6 +614,9 @@ const doDualSwitch = () => {
         DLog(`  prev[${prevTrack.label}] will NOT hard-stop; cleanup after ctx=${cleanupAfterCtx.toFixed(3)} (naturalEnd=${naturalEndCtx.toFixed(3)})`);
         safeCleanupTrack(prevTrack);
 
+        transitionBase = raw;
+        transitionStartTime = audioCtx.currentTime;
+        transitionPos = loopStartS;
         currentTrack = newTrack;
 
         const switchRawSec = raw + remainingToEnd;
