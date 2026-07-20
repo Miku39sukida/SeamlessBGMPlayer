@@ -365,7 +365,7 @@ body.drawer-open .drawer-overlay {
     min-height: 56px;
     font-size: 17px;
     line-height: 1.65;
-    font-weight: 700;
+    font-weight: normal;
     color: var(--primary-dark);
     white-space: normal;
     font-family: inherit;
@@ -386,7 +386,7 @@ body.drawer-open .drawer-overlay {
     margin-top: 6px;
     font-size: 14px;
     color: var(--text-light);
-    font-weight: 600;
+    font-weight: normal;
 }
 
 .lyric-active {
@@ -410,9 +410,177 @@ body.drawer-open .drawer-overlay {
     font-weight: 600;
 }
 
+.lyric-empty-line {
+    display: block;
+    min-height: 56px;
+    line-height: 1.65;
+}
+
 .lyric-text.is-empty {
     color: var(--text-light);
     font-weight: 600;
+}
+
+.lyric-panel {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.lyric-panel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 180, 210, 0.3);
+}
+
+.lyric-panel * {
+    pointer-events: none;
+}
+
+.lyric-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.lyric-modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.lyric-modal {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.9);
+    transition: transform 0.3s ease;
+}
+
+.lyric-modal-overlay.active .lyric-modal {
+    transform: scale(1);
+}
+
+.lyric-modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 180, 210, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.lyric-modal-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.color-picker-label {
+    font-size: 12px;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+#lyricColorPicker {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 0;
+}
+
+#lyricColorPicker::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+
+#lyricColorPicker::-webkit-color-swatch {
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.lyric-modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--primary-dark);
+    letter-spacing: 0.05em;
+}
+
+.lyric-scroll-container {
+    flex: 1;
+    overflow: hidden;
+    padding: 16px;
+    max-height: 60vh;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior: none;
+    user-select: none;
+    touch-action: none;
+    position: relative;
+}
+
+.lyric-scroll-container::-webkit-scrollbar {
+    display: none;
+}
+
+.lyric-scroll-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+}
+
+.lyric-scroll-item {
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 16px;
+    line-height: 1.8;
+    text-align: center;
+    transition: all 0.3s ease;
+    opacity: 0.45;
+    color: #666;
+}
+
+.lyric-scroll-item.active {
+    opacity: 1;
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 50%, transparent);
+}
+
+.lyric-scroll-item.done {
+    opacity: 0.7;
+    color: #888;
+}
+
+.lyric-scroll-item.empty-line {
+    opacity: 0.3;
+    font-style: italic;
+}
+
+.lyric-scroll-item .translation {
+    font-size: 13px;
+    color: #888;
+    margin-top: 4px;
+    font-weight: 500;
+    opacity: 0.8;
+}
+
+.lyric-scroll-item.active .translation {
+    color: #999;
 }
 
 .beat-display {

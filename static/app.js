@@ -42,6 +42,8 @@ let loadingTrackIdx = -1;
 let transitionPos = null;
 let transitionBase = null;
 let transitionStartTime = null;
+let lastLyricIndex = -1;
+let lastScrollOffset = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -855,6 +857,11 @@ const setLyricText = (entry, currentSec, lineEndTime = null) => {
         el.classList.toggle('is-empty', true);
         return;
     }
+    if (entry.is_empty) {
+        el.innerHTML = '<span class="lyric-empty-line"></span>';
+        el.classList.toggle('is-empty', true);
+        return;
+    }
     el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
     el.classList.toggle('is-empty', false);
 };
@@ -871,11 +878,11 @@ const updateLyricDisplay = () => {
     }
     if (nextIndex !== activeLyricIndex) {
         activeLyricIndex = nextIndex;
+        const line = lyricLines[activeLyricIndex] || lyricLines[0];
+        const nextLine = lyricLines[activeLyricIndex + 1];
+        const lineEndTime = nextLine ? nextLine.time_sec : null;
+        setLyricText(line || null, s, lineEndTime);
     }
-    const line = lyricLines[activeLyricIndex] || lyricLines[0];
-    const nextLine = lyricLines[activeLyricIndex + 1];
-    const lineEndTime = nextLine ? nextLine.time_sec : null;
-    setLyricText(line || null, s, lineEndTime);
 };
 
 const loadLyrics = async (cfg, applyNow = true) => {
@@ -916,7 +923,10 @@ const loadLyrics = async (cfg, applyNow = true) => {
         if (!resp.ok) throw new Error('Lyrics fetch failed: ' + resp.status);
         const data = await resp.json();
         if (data.ok && Array.isArray(data.data?.lines)) {
-            const loadedLines = data.data.lines;
+            let loadedLines = data.data.lines;
+            if (loadedLines.length > 0 && loadedLines[0].time_sec > 0.1) {
+                loadedLines = [{ is_empty: true, time_sec: 0 }, ...loadedLines];
+            }
             if (applyNow) {
                 lyricLines = loadedLines;
                 if (lyricLines.length > 0) {
@@ -1285,6 +1295,7 @@ const updateUi = () => {
     $('progressEnd').textContent = fmtTime(totalDur);
 
     updateLyricDisplay();
+    updateLyricScrollList();
 
     const absFloored = Math.max(1, Math.floor(bb.abs));
     const b0ForDot = absFloored - 1;
@@ -1637,6 +1648,115 @@ const secFromBarBeatWrap = (cfg, bar, beat) => {
     return isNaN(result) ? 0 : result;
 };
 
+const openLyricModal = () => {
+    const overlay = $('lyricModalOverlay');
+    const title = $('lyricModalTitle');
+    const list = $('lyricScrollList');
+    if (!overlay || !title || !list) return;
+    
+    title.textContent = activeTrackCfg?.name || '歌词';
+    list.style.transform = 'translateY(0)';
+    lastLyricIndex = -1;
+    
+    if (!lyricLines.length) {
+        list.innerHTML = '<div class="lyric-scroll-item empty-line">暂无歌词</div>';
+    } else {
+        list.innerHTML = lyricLines.map((line, idx) => {
+            if (line.is_empty) {
+                return '<div class="lyric-scroll-item empty-line"></div>';
+            }
+            const text = escapeHtml(line.text || '');
+            const translation = line.translation ? `<div class="translation">${escapeHtml(line.translation)}</div>` : '';
+            return `<div class="lyric-scroll-item" data-idx="${idx}" data-time="${line.time_sec}">${text}${translation}</div>`;
+        }).join('');
+    }
+    
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden', 'false');
+    
+    setTimeout(() => {
+        if (!lyricLines.length) return;
+        
+        const s = currentPlaySec();
+        let currentIdx = 0;
+        while (currentIdx < lyricLines.length - 1 && lyricLines[currentIdx + 1].time_sec <= s) {
+            currentIdx += 1;
+        }
+        
+        const items = list.querySelectorAll('.lyric-scroll-item');
+        items.forEach((item, idx) => {
+            item.classList.remove('active', 'done');
+            if (idx === currentIdx) {
+                item.classList.add('active');
+            } else if (idx < currentIdx) {
+                item.classList.add('done');
+            }
+        });
+        
+        updateLyricScrollPosition();
+    }, 200);
+};
+
+const closeLyricModal = () => {
+    const overlay = $('lyricModalOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden', 'true');
+};
+
+const updateLyricScrollList = () => {
+    const list = $('lyricScrollList');
+    const container = $('lyricScrollContainer');
+    const overlay = $('lyricModalOverlay');
+    if (!list || !container || !overlay.classList.contains('active') || !lyricLines.length) return;
+    
+    const s = currentPlaySec();
+    let currentIdx = 0;
+    while (currentIdx < lyricLines.length - 1 && lyricLines[currentIdx + 1].time_sec <= s) {
+        currentIdx += 1;
+    }
+    
+    if (currentIdx !== lastLyricIndex) {
+        const items = list.querySelectorAll('.lyric-scroll-item');
+        
+        if (lastLyricIndex >= 0 && lastLyricIndex < items.length) {
+            items[lastLyricIndex].classList.remove('active');
+            if (lastLyricIndex < currentIdx) {
+                items[lastLyricIndex].classList.add('done');
+            }
+        }
+        
+        if (currentIdx >= 0 && currentIdx < items.length) {
+            items[currentIdx].classList.remove('done');
+            items[currentIdx].classList.add('active');
+        }
+        
+        lastLyricIndex = currentIdx;
+        updateLyricScrollPosition();
+    }
+};
+
+const updateLyricScrollPosition = () => {
+    const list = $('lyricScrollList');
+    const container = $('lyricScrollContainer');
+    if (!list || !container) return;
+    
+    const activeItem = list.querySelector('.lyric-scroll-item.active');
+    if (!activeItem) return;
+    
+    const itemTop = activeItem.offsetTop;
+    const containerHeight = container.clientHeight;
+    const itemHeight = activeItem.offsetHeight;
+    
+    let offset = itemTop - containerHeight / 2 + itemHeight / 2;
+    offset = Math.max(0, offset);
+    
+    const maxOffset = list.offsetHeight - containerHeight;
+    offset = Math.min(offset, maxOffset);
+    
+    list.style.transform = `translateY(-${offset}px)`;
+};
+
 const init = async () => {
     try {
         const r = await fetch('/api/config', { credentials: 'include' });
@@ -1672,6 +1792,33 @@ const init = async () => {
     window.addEventListener('resize', () => {
         if (!isMobileBreakpoint()) closeDrawer();
     });
+
+    // --- Lyric modal wiring ---
+    const lp = document.getElementById('lyricPanel');
+    if (lp) lp.addEventListener('click', openLyricModal);
+    const lmo = document.getElementById('lyricModalOverlay');
+    if (lmo) lmo.addEventListener('click', (e) => {
+        if (e.target === lmo) closeLyricModal();
+    });
+    const lmc = document.getElementById('lyricModalClose');
+    if (lmc) lmc.addEventListener('click', closeLyricModal);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && lmo?.classList.contains('active')) closeLyricModal();
+    });
+
+    const lcp = document.getElementById('lyricColorPicker');
+    if (lcp) {
+        const savedColor = localStorage.getItem('lyricHighlightColor');
+        if (savedColor) {
+            lcp.value = savedColor;
+            document.documentElement.style.setProperty('--lyric-highlight-color', savedColor);
+        }
+        lcp.addEventListener('input', (e) => {
+            const color = e.target.value;
+            localStorage.setItem('lyricHighlightColor', color);
+            document.documentElement.style.setProperty('--lyric-highlight-color', color);
+        });
+    }
 
     if (config.tracks.length > 0) {
         applyTrackCfg(config.tracks[0]);
