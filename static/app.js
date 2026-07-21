@@ -852,18 +852,32 @@ const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
 const setLyricText = (entry, currentSec, lineEndTime = null) => {
     const el = $('lyricText');
     if (!el) return;
+    
+    let lyricText = '';
+    let lyricTranslation = '';
+    
     if (!entry) {
         el.innerHTML = '<span class="lyric-empty">暂无歌词</span>';
         el.classList.toggle('is-empty', true);
-        return;
-    }
-    if (entry.is_empty) {
+    } else if (entry.is_empty) {
         el.innerHTML = '<span class="lyric-empty-line"></span>';
         el.classList.toggle('is-empty', true);
-        return;
+    } else {
+        el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
+        el.classList.toggle('is-empty', false);
+        lyricText = entry.text || '';
+        lyricTranslation = entry.translation || '';
     }
-    el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
-    el.classList.toggle('is-empty', false);
+    
+    if (window.electronAPI && window.electronAPI.updateDesktopLyric) {
+        window.electronAPI.updateDesktopLyric({ 
+            text: lyricText, 
+            translation: lyricTranslation,
+            karaoke: entry?.karaoke || [],
+            lineEndTime: lineEndTime,
+            currentTime: currentSec
+        });
+    }
 };
 
 const updateLyricDisplay = () => {
@@ -878,11 +892,11 @@ const updateLyricDisplay = () => {
     }
     if (nextIndex !== activeLyricIndex) {
         activeLyricIndex = nextIndex;
-        const line = lyricLines[activeLyricIndex] || lyricLines[0];
-        const nextLine = lyricLines[activeLyricIndex + 1];
-        const lineEndTime = nextLine ? nextLine.time_sec : null;
-        setLyricText(line || null, s, lineEndTime);
     }
+    const line = lyricLines[activeLyricIndex] || lyricLines[0];
+    const nextLine = lyricLines[activeLyricIndex + 1];
+    const lineEndTime = nextLine ? nextLine.time_sec : null;
+    setLyricText(line || null, s, lineEndTime);
 };
 
 const loadLyrics = async (cfg, applyNow = true) => {
@@ -1666,8 +1680,18 @@ const openLyricModal = () => {
                 return '<div class="lyric-scroll-item empty-line"></div>';
             }
             const text = escapeHtml(line.text || '');
+            const karaoke = Array.isArray(line.karaoke) ? line.karaoke : [];
+            let textHtml = text;
+            if (karaoke.length > 0) {
+                const slots = _buildFlattenCharSlots(karaoke, lyricLines[idx + 1]?.time_sec || null);
+                if (slots.length > 0) {
+                    textHtml = slots.map((slot, sIdx) => 
+                        `<span class="karaoke-char" data-start="${slot.start}" data-end="${slot.end}">${escapeHtml(slot.text)}</span>`
+                    ).join('');
+                }
+            }
             const translation = line.translation ? `<div class="translation">${escapeHtml(line.translation)}</div>` : '';
-            return `<div class="lyric-scroll-item" data-idx="${idx}" data-time="${line.time_sec}">${text}${translation}</div>`;
+            return `<div class="lyric-scroll-item" data-idx="${idx}" data-time="${line.time_sec}">${textHtml}${translation}</div>`;
         }).join('');
     }
     
@@ -1716,21 +1740,39 @@ const updateLyricScrollList = () => {
         currentIdx += 1;
     }
     
+    const items = list.querySelectorAll('.lyric-scroll-item');
+    
+    items.forEach((item, idx) => {
+        const karaokeChars = item.querySelectorAll('.karaoke-char');
+        karaokeChars.forEach(char => {
+            char.classList.remove('done', 'active');
+        });
+        
+        if (idx === currentIdx) {
+            item.classList.add('active');
+            item.classList.remove('done');
+            
+            karaokeChars.forEach(char => {
+                const start = parseFloat(char.dataset.start);
+                const end = parseFloat(char.dataset.end);
+                if (s >= end) {
+                    char.classList.add('done');
+                } else if (s >= start) {
+                    char.classList.add('active');
+                }
+            });
+        } else if (idx < currentIdx) {
+            item.classList.remove('active');
+            item.classList.add('done');
+            karaokeChars.forEach(char => {
+                char.classList.add('done');
+            });
+        } else {
+            item.classList.remove('active', 'done');
+        }
+    });
+    
     if (currentIdx !== lastLyricIndex) {
-        const items = list.querySelectorAll('.lyric-scroll-item');
-        
-        if (lastLyricIndex >= 0 && lastLyricIndex < items.length) {
-            items[lastLyricIndex].classList.remove('active');
-            if (lastLyricIndex < currentIdx) {
-                items[lastLyricIndex].classList.add('done');
-            }
-        }
-        
-        if (currentIdx >= 0 && currentIdx < items.length) {
-            items[currentIdx].classList.remove('done');
-            items[currentIdx].classList.add('active');
-        }
-        
         lastLyricIndex = currentIdx;
         updateLyricScrollPosition();
     }
@@ -1751,7 +1793,7 @@ const updateLyricScrollPosition = () => {
     let offset = itemTop - containerHeight / 2 + itemHeight / 2;
     offset = Math.max(0, offset);
     
-    const maxOffset = list.offsetHeight - containerHeight;
+    const maxOffset = list.offsetHeight - containerHeight + 60;
     offset = Math.min(offset, maxOffset);
     
     list.style.transform = `translateY(-${offset}px)`;
@@ -1818,6 +1860,16 @@ const init = async () => {
             localStorage.setItem('lyricHighlightColor', color);
             document.documentElement.style.setProperty('--lyric-highlight-color', color);
         });
+    }
+
+    if (window.electronAPI && window.electronAPI.isElectron && window.electronAPI.isElectron()) {
+        const dlBtn = document.getElementById('desktopLyricBtn');
+        if (dlBtn) {
+            dlBtn.style.display = 'inline-flex';
+            dlBtn.addEventListener('click', async () => {
+                await window.electronAPI.openDesktopLyric();
+            });
+        }
     }
 
     if (config.tracks.length > 0) {

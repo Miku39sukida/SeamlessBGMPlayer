@@ -15,6 +15,7 @@
             <h1 class="title">🎵 无缝循环播放器</h1>
         </div>
         <div class="header-actions">
+            <button id="desktopLyricBtn" class="btn btn-secondary desktop-lyric-btn" title="桌面歌词" style="display:none;">🖥</button>
             <button id="stopBtn" class="btn btn-danger" title="停止播放">⏹ 停止</button>
         </div>
     </header>
@@ -30,7 +31,7 @@
                 </div>
             </div>
 
-            <div class="lyric-panel">
+            <div class="lyric-panel" id="lyricPanel" title="点击查看滚动歌词">
                 <div class="lyric-label">歌词</div>
                 <div class="lyric-text" id="lyricText">暂无歌词</div>
             </div>
@@ -117,4 +118,20 @@
 
 <script src="/static/app.js"></script>
 </body>
+
+<div class="lyric-modal-overlay" id="lyricModalOverlay" aria-hidden="true">
+    <div class="lyric-modal">
+        <div class="lyric-modal-header">
+            <h3 id="lyricModalTitle">歌词</h3>
+            <div class="lyric-modal-header-right">
+                <label class="color-picker-label">高亮颜色</label>
+                <input type="color" id="lyricColorPicker" value="#66CCFF" aria-label="歌词高亮颜色">
+                <button id="lyricModalClose" class="btn btn-small btn-danger" aria-label="关闭歌词弹窗">✕</button>
+            </div>
+        </div>
+        <div class="lyric-scroll-container" id="lyricScrollContainer">
+            <div class="lyric-scroll-list" id="lyricScrollList"></div>
+        </div>
+    </div>
+</div>
 </html>

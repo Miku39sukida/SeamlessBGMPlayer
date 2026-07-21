@@ -540,6 +540,7 @@ body.drawer-open .drawer-overlay {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    padding-bottom: 80px;
     transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform;
 }
@@ -557,8 +558,6 @@ body.drawer-open .drawer-overlay {
 
 .lyric-scroll-item.active {
     opacity: 1;
-    color: var(--lyric-highlight-color, #66CCFF);
-    text-shadow: 0 0 8px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 50%, transparent);
 }
 
 .lyric-scroll-item.done {
@@ -581,6 +580,37 @@ body.drawer-open .drawer-overlay {
 
 .lyric-scroll-item.active .translation {
     color: #999;
+}
+
+.karaoke-char {
+    transition: color 0.15s ease;
+    color: #aaa;
+}
+
+.karaoke-char.done {
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 4px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 40%, transparent);
+}
+
+.karaoke-char.active {
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 60%, transparent), 0 0 20px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 30%, transparent);
+    font-weight: 600;
+}
+
+.lyric-scroll-item.active .karaoke-char {
+    color: #ccc;
+}
+
+.lyric-scroll-item.active .karaoke-char.done {
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 4px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 40%, transparent);
+}
+
+.lyric-scroll-item.active .karaoke-char.active {
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 60%, transparent), 0 0 20px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 30%, transparent);
+    font-weight: 600;
 }
 
 .beat-display {
