@@ -1335,6 +1335,12 @@ const startUiTicker = () => {
     updateUi();
 };
 
+setInterval(() => {
+    if (currentTrack && activeTrackCfg) {
+        updateLyricDisplay();
+    }
+}, 16);
+
 const renderMarkers = () => {
     const totalDur = Math.max(audioDurS || 1, loopEndS || 1);
     const clampPct = (p) => Math.max(0, Math.min(99.9, p));
