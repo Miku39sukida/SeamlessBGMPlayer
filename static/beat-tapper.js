@@ -31,6 +31,7 @@ class BeatTapper {
         this.currentRhythmType = 'whole';
         this.currentMode = 'normal';
         this.tempoChanges = [];
+        this.meterChanges = [];
 
         this.audio.addEventListener('ended', () => this.stop());
         this.audio.addEventListener('error', (e) => {
@@ -61,6 +62,7 @@ class BeatTapper {
         $bt('#beatTapperClear').addEventListener('click', () => this.clearTaps());
         $bt('#beatTapperSave').addEventListener('click', () => this.saveBRC());
         $bt('#beatTapperAddTempoChange').addEventListener('click', () => this.addTempoChange());
+        $bt('#beatTapperAddMeterChange').addEventListener('click', () => this.addMeterChange());
 
         $bt('.beat-tapper-rhythm-types').addEventListener('click', (e) => {
             if (e.target.classList.contains('beat-tapper-rhythm-btn')) {
@@ -364,39 +366,8 @@ class BeatTapper {
             .sort((a, b) => a.abs - b.abs);
         
         const barBeatToTime = (bar, beat) => {
-            const targetAbsBeat = (bar - 1) * beatsPerBar + beat;
-            let time = 0;
-            let prevBeat = zeroAbsBeat;
-            let prevTime = 0;
-            let prevBpm = bpm;
-            
-            for (const tc of sortedTempoChanges) {
-                if (tc.abs >= targetAbsBeat) {
-                    const beatsInSegment = targetAbsBeat - prevBeat;
-                    if (beatsInSegment > 0 && prevBpm > 0) {
-                        time = prevTime + beatsInSegment * (60 / prevBpm);
-                    } else {
-                        time = prevTime;
-                    }
-                    break;
-                }
-                const beatsInSegment = tc.abs - prevBeat;
-                if (beatsInSegment > 0 && prevBpm > 0) {
-                    prevTime += beatsInSegment * (60 / prevBpm);
-                }
-                prevBeat = tc.abs;
-                prevBpm = tc.bpm;
-            }
-            if (targetAbsBeat >= prevBeat) {
-                const beatsInSegment = targetAbsBeat - prevBeat;
-                if (beatsInSegment > 0 && prevBpm > 0) {
-                    time = prevTime + beatsInSegment * (60 / prevBpm);
-                } else {
-                    time = prevTime;
-                }
-            }
-            return Math.max(0, time);
-        };
+                return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
+            };
         
         let currentLineIdx = -1;
         let lastTime = -1;
@@ -432,45 +403,9 @@ class BeatTapper {
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
 
-        const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-        
-        const sortedTempoChanges = [...this.tempoChanges]
-            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-            .map(tc => {
-                const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
-                return { ...tc, abs };
-            })
-            .sort((a, b) => a.abs - b.abs);
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
 
-        let absBeatRaw = zeroAbsBeat;
-        let prevTime = 0;
-        let prevBeat = zeroAbsBeat;
-        let prevBpm = bpm;
-
-        for (const tc of sortedTempoChanges) {
-            const beatsToTc = tc.abs - prevBeat;
-            const timeToTc = beatsToTc * (60 / prevBpm);
-            const tcTime = prevTime + timeToTc;
-
-            if (currentTime < tcTime) {
-                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-                absBeatRaw = prevBeat + beatsElapsed;
-                break;
-            }
-            prevBeat = tc.abs;
-            prevTime = tcTime;
-            prevBpm = tc.bpm;
-            absBeatRaw = tc.abs;
-        }
-        if (currentTime >= prevTime) {
-            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-            absBeatRaw = prevBeat + beatsElapsed;
-        }
-
-        const bar = Math.max(1, Math.floor((absBeatRaw - 1) / beatsPerBar) + 1);
-        const beat = absBeatRaw - (bar - 1) * beatsPerBar;
-
-        $bt('#beatTapperBarValue').textContent = `${bar}:${beat.toFixed(2)} (小节:拍)`;
+        $bt('#beatTapperBarValue').textContent = `${result.bar}:${result.beat.toFixed(2)} (小节:拍)`;
     }
 
     formatTime(seconds) {
@@ -492,54 +427,17 @@ class BeatTapper {
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
 
-        const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-        
-        const sortedTempoChanges = [...this.tempoChanges]
-            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-            .map(tc => {
-                const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
-                return { ...tc, abs };
-            })
-            .sort((a, b) => a.abs - b.abs);
-        
-        let absBeatRaw = zeroAbsBeat;
-        let prevTime = 0;
-        let prevBeat = zeroAbsBeat;
-        let prevBpm = bpm;
-        
-        for (const tc of sortedTempoChanges) {
-            const beatsToTc = tc.abs - prevBeat;
-            if (beatsToTc <= 0) continue;
-            const timeToTc = beatsToTc * (60 / prevBpm);
-            const tcTime = prevTime + timeToTc;
-            
-            if (currentTime < tcTime) {
-                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-                absBeatRaw = prevBeat + beatsElapsed;
-                break;
-            }
-            prevBeat = tc.abs;
-            prevTime = tcTime;
-            prevBpm = tc.bpm;
-            absBeatRaw = tc.abs;
-        }
-        if (currentTime >= prevTime) {
-            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-            absBeatRaw = prevBeat + beatsElapsed;
-        }
-
-        const bar = Math.floor((absBeatRaw - 1) / beatsPerBar) + 1;
-        const beat = absBeatRaw - (bar - 1) * beatsPerBar;
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
 
         const rhythm = RHYTHM_TYPES[this.currentRhythmType];
-        const targetBeat = this.findNearestBeat(beat, rhythm.beats);
+        const targetBeat = this.findNearestBeat(result.beat, rhythm.beats);
 
-        const tag = `[${bar}:${targetBeat}]`;
+        const tag = `[${result.bar}:${targetBeat}]`;
         this.insertTagAtCursor(tag);
 
         this.flashTapArea();
         this.updateTapCount();
-        this.setStatus(`已打点: ${bar}:${targetBeat.toFixed(2)}`);
+        this.setStatus(`已打点: ${result.bar}:${targetBeat.toFixed(2)}`);
     }
 
     insertTagAtCursor(tag) {
@@ -654,47 +552,7 @@ class BeatTapper {
             const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
             const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
 
-            const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-            const targetAbsBeat = (bar - 1) * beatsPerBar + beat;
-            
-            const sortedTempoChanges = [...this.tempoChanges]
-                .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-                .map(tc => {
-                    const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
-                    return { ...tc, abs };
-                })
-                .sort((a, b) => a.abs - b.abs);
-            
-            let targetTime = 0;
-            let prevBeat = zeroAbsBeat;
-            let prevTime = 0;
-            let prevBpm = bpm;
-            
-            for (const tc of sortedTempoChanges) {
-                if (tc.abs >= targetAbsBeat) {
-                    const beatsInSegment = targetAbsBeat - prevBeat;
-                    if (beatsInSegment > 0 && prevBpm > 0) {
-                        targetTime = prevTime + beatsInSegment * (60 / prevBpm);
-                    } else {
-                        targetTime = prevTime;
-                    }
-                    break;
-                }
-                const beatsInSegment = tc.abs - prevBeat;
-                if (beatsInSegment > 0 && prevBpm > 0) {
-                    prevTime += beatsInSegment * (60 / prevBpm);
-                }
-                prevBeat = tc.abs;
-                prevBpm = tc.bpm;
-            }
-            if (targetAbsBeat >= prevBeat) {
-                const beatsInSegment = targetAbsBeat - prevBeat;
-                if (beatsInSegment > 0 && prevBpm > 0) {
-                    targetTime = prevTime + beatsInSegment * (60 / prevBpm);
-                } else {
-                    targetTime = prevTime;
-                }
-            }
+            const targetTime = window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
             
             targetTime = Math.max(0, targetTime);
 
@@ -782,6 +640,10 @@ class BeatTapper {
         $bt('#beatTapperTempoChanges').value = JSON.stringify(this.tempoChanges);
     }
 
+    saveMeterChangesToInput() {
+        $bt('#beatTapperMeterChanges').value = JSON.stringify(this.meterChanges);
+    }
+
     addTempoChange() {
         const bpm = parseFloat($bt('#beatTapperBpm').value) || 120;
         
@@ -853,6 +715,82 @@ class BeatTapper {
             });
             row.querySelector('.beat-tapper-tc-del').addEventListener('click', () => {
                 this.removeTempoChange(originalIdx);
+            });
+            listEl.appendChild(row);
+        });
+    }
+
+    addMeterChange() {
+        const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
+        
+        let nextBar = 5;
+        if (this.meterChanges.length > 0) {
+            const maxBar = Math.max(...this.meterChanges.map(mc => mc.bar || 1));
+            nextBar = maxBar + 4;
+        }
+        
+        this.meterChanges.push({ bar: nextBar, beat: 1, beats_per_bar: beatsPerBar });
+        this.saveMeterChangesToInput();
+        this.renderMeterChanges();
+    }
+
+    removeMeterChange(index) {
+        this.meterChanges.splice(index, 1);
+        this.saveMeterChangesToInput();
+        this.renderMeterChanges();
+    }
+
+    updateMeterChangeField(index, field, value) {
+        if (this.meterChanges[index]) {
+            this.meterChanges[index][field] = value;
+            this.saveMeterChangesToInput();
+        }
+    }
+
+    renderMeterChanges() {
+        const listEl = $bt('#beatTapperMeterChangesList');
+        if (!listEl) return;
+        
+        const sortedWithIdx = this.meterChanges.map((mc, idx) => ({ ...mc, __idx: idx }))
+            .sort((a, b) => {
+                if (a.bar !== b.bar) return a.bar - b.bar;
+                return a.beat - b.beat;
+            });
+
+        if (sortedWithIdx.length === 0) {
+            listEl.innerHTML = '<div class="beat-tapper-tc-empty">暂无变拍规则，点击上方「＋ 添加变拍规则」按钮新增</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        sortedWithIdx.forEach((mc) => {
+            const originalIdx = mc.__idx;
+            const row = document.createElement('div');
+            row.className = 'beat-tapper-tc-row';
+            row.dataset.idx = originalIdx;
+            row.innerHTML = `
+                <span class="beat-tapper-tc-idx">${mc.__idx + 1}</span>
+                <input type="number" step="1" min="1" class="beat-tapper-tc-bar" placeholder="小节" value="${mc.bar || ''}">
+                <span class="beat-tapper-tc-sep">:</span>
+                <input type="number" step="0.1" min="1" class="beat-tapper-tc-beat" placeholder="拍" value="${mc.beat || ''}">
+                <span class="beat-tapper-tc-arrow">→</span>
+                <input type="number" step="0.1" min="1" class="beat-tapper-tc-bpm" placeholder="每小节拍数" value="${mc.beats_per_bar || ''}">
+                <button class="beat-tapper-tc-del" title="删除">🗑</button>
+            `;
+            row.querySelector('.beat-tapper-tc-bar').addEventListener('input', (e) => {
+                const val = parseInt(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'bar', val);
+            });
+            row.querySelector('.beat-tapper-tc-beat').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'beat', val);
+            });
+            row.querySelector('.beat-tapper-tc-bpm').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'beats_per_bar', val);
+            });
+            row.querySelector('.beat-tapper-tc-del').addEventListener('click', () => {
+                this.removeMeterChange(originalIdx);
             });
             listEl.appendChild(row);
         });

@@ -39,6 +39,7 @@ function defaultTrack() {
     jump_seg_end_beat: 0,
     font_face: 'default',
     tempo_changes: [],
+    meter_changes: [],
   };
 }
 
@@ -479,6 +480,12 @@ function renderTrackCard(t, index) {
       <div class="tempo-changes-list" data-k="tempo_changes"></div>
       <button class="btn btn-small btn-primary" data-act="add-tempo-change" style="margin-top:8px;">＋ 添加变速规则</button>
     </div>
+
+    <div class="section-title">🎵 分段变拍规则（可选）：指定小节+拍号切换每小节拍数</div>
+    <div class="field">
+      <div class="meter-changes-list" data-k="meter_changes"></div>
+      <button class="btn btn-small btn-primary" data-act="add-meter-change" style="margin-top:8px;">＋ 添加变拍规则</button>
+    </div>
     </div>
   `;
 
@@ -639,6 +646,64 @@ function renderTrackCard(t, index) {
     
     t.tempo_changes.push({ bar: nextBar, beat: 1, bpm: bpm });
     renderTempoChanges();
+    markDirty(card);
+  });
+
+  const renderMeterChanges = () => {
+    const listEl = $('.meter-changes-list', card);
+    if (!listEl) return;
+    t.meter_changes = t.meter_changes || [];
+    
+    listEl.innerHTML = '';
+    if (t.meter_changes.length === 0) {
+      listEl.innerHTML = '<div class="tc-empty-hint">暂无变拍规则，点击上方「＋ 添加变拍规则」按钮新增</div>';
+      return;
+    }
+    t.meter_changes.forEach((mc, idx) => {
+      const row = document.createElement('div');
+      row.className = 'tempo-change-row';
+      row.innerHTML = `
+        <span class="tc-idx-badge">${idx + 1}</span>
+        <input type="number" step="1" min="1" class="tc-bar" placeholder="小节" value="${mc.bar || ''}">
+        <span class="tc-sep">:</span>
+        <input type="number" step="0.1" min="1" class="tc-beat" placeholder="拍" value="${mc.beat || ''}">
+        <span class="tc-arrow">→</span>
+        <input type="number" step="0.1" min="1" class="tc-bpm" placeholder="每小节拍数" value="${mc.beats_per_bar || ''}">
+        <button class="btn btn-icon btn-danger tc-del" title="删除">🗑</button>
+      `;
+      row.querySelector('.tc-bar').addEventListener('input', (e) => {
+        mc.bar = parseInt(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-beat').addEventListener('input', (e) => {
+        mc.beat = parseFloat(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-bpm').addEventListener('input', (e) => {
+        mc.beats_per_bar = parseFloat(e.target.value) || 0;
+        markDirty(card);
+      });
+      row.querySelector('.tc-del').addEventListener('click', () => {
+        t.meter_changes.splice(idx, 1);
+        renderMeterChanges();
+        markDirty(card);
+      });
+      listEl.appendChild(row);
+    });
+  };
+  renderMeterChanges();
+  card.querySelector('[data-act="add-meter-change"]').addEventListener('click', () => {
+    t.meter_changes = t.meter_changes || [];
+    const beatsPerBar = parseFloat($('[data-k="beats_per_bar"]', card).value) || 4;
+    
+    let nextBar = 5;
+    if (t.meter_changes.length > 0) {
+      const maxBar = Math.max(...t.meter_changes.map(mc => mc.bar || 1));
+      nextBar = maxBar + 4;
+    }
+    
+    t.meter_changes.push({ bar: nextBar, beat: 1, beats_per_bar: beatsPerBar });
+    renderMeterChanges();
     markDirty(card);
   });
 

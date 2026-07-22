@@ -10,6 +10,19 @@ class BeatCalculator {
         this.files = [];
         this.allFiles = [];
         this.tempoChanges = [];
+        this.meterChanges = [];
+        
+        this.audioCtx = null;
+        this.beatBuffer = null;
+        this.barBuffer = null;
+        this.audioBuffer = null;
+        this.audioSource = null;
+        this.gainNode = null;
+        this.metronomeTimer = null;
+        this.lastScheduledBeat = -1;
+        this.playbackStartTime = 0;
+        this.playbackOffset = 0;
+        this.wasPlaying = false;
 
         this.audio.addEventListener('ended', () => this.stop());
         this.audio.addEventListener('error', (e) => {
@@ -38,6 +51,7 @@ class BeatCalculator {
         $bc('#beatCalcFile').addEventListener('change', () => this.loadAudio());
         $bc('#beatCalcFileSearch').addEventListener('input', () => this.renderFileList());
         $bc('#beatCalcAddTempoChange').addEventListener('click', () => this.addTempoChange());
+        $bc('#beatCalcAddMeterChange').addEventListener('click', () => this.addMeterChange());
 
         const header = $bc('.beat-calc-header');
         let isDragging = false;
@@ -166,55 +180,60 @@ class BeatCalculator {
         this.setStatus('加载中...');
 
         try {
+            this.initAudioContext();
             const url = `/api/bgm/${encodeURIComponent(fileName)}?dir_id=${encodeURIComponent(dirId)}`;
             
-            return new Promise((resolve, reject) => {
-                const onLoadedMetadata = () => {
-                    this.audio.removeEventListener('loadedmetadata', onLoadedMetadata);
-                    this.audio.removeEventListener('error', onError);
-                    
-                    const duration = this.audio.duration || 0;
-                    $bc('#beatCalcTotalTime').textContent = this.formatTime(duration);
-                    $bc('#beatCalcProgress').max = duration;
-                    $bc('#beatCalcProgress').value = 0;
-                    this.setStatus('加载完成');
-                    this.updateBarDisplay(0);
-                    resolve();
-                };
-
-                const onError = (e) => {
-                    this.audio.removeEventListener('loadedmetadata', onLoadedMetadata);
-                    this.audio.removeEventListener('error', onError);
-                    this.setStatus('加载音频失败: ' + e.target.error?.message || '未知错误');
-                    reject(e);
-                };
-
-                this.audio.addEventListener('loadedmetadata', onLoadedMetadata);
-                this.audio.addEventListener('error', onError);
-                
-                this.audio.src = url;
-                this.audio.load();
-            });
+            const response = await fetch(url);
+            const arrayBuffer = await response.arrayBuffer();
+            this.audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
+            
+            const duration = this.audioBuffer.duration || 0;
+            $bc('#beatCalcTotalTime').textContent = this.formatTime(duration);
+            $bc('#beatCalcProgress').max = duration;
+            $bc('#beatCalcProgress').value = 0;
+            this.setStatus('加载完成');
+            this.updateBarDisplay(0);
         } catch (e) {
             this.setStatus('加载音频失败: ' + e.message);
         }
     }
 
     async play() {
-        if (!this.audio.src) {
+        if (!this.audioBuffer) {
             await this.loadAudio();
-            if (!this.audio.src) return;
+            if (!this.audioBuffer) return;
         }
 
         if (this.isPlaying) return;
 
         try {
-            await this.audio.play();
+            this.initAudioContext();
+            
+            if (!this.gainNode) {
+                this.gainNode = this.audioCtx.createGain();
+                this.gainNode.connect(this.audioCtx.destination);
+            }
+            
+            this.audioSource = this.audioCtx.createBufferSource();
+            this.audioSource.buffer = this.audioBuffer;
+            this.audioSource.connect(this.gainNode);
+            
+            this.playbackStartTime = this.audioCtx.currentTime;
+            this.playbackOffset = parseFloat($bc('#beatCalcProgress').value) || 0;
+            
+            this.audioSource.start(0, this.playbackOffset);
+            
+            this.audioSource.onended = () => {
+                this.stop();
+            };
+            
             this.isPlaying = true;
+            this.lastScheduledBeat = -1;
             $bc('#beatCalcPlay').style.display = 'none';
             $bc('#beatCalcPause').style.display = 'inline-block';
             this.setStatus('播放中');
             this.startUiTicker();
+            this.startMetronome();
         } catch (e) {
             this.setStatus('播放失败: ' + e.message);
         }
@@ -222,20 +241,39 @@ class BeatCalculator {
 
     pause() {
         if (!this.isPlaying) return;
-        this.audio.pause();
+        
+        const currentTime = this.getCurrentTime();
+        
+        if (this.audioSource) {
+            this.audioSource.onended = null;
+            this.audioSource.stop();
+            this.audioSource = null;
+        }
+        
+        this.playbackOffset = currentTime;
         this.isPlaying = false;
         this.stopUiTicker();
+        this.stopMetronome();
+        this.lastScheduledBeat = -1;
         $bc('#beatCalcPlay').style.display = 'inline-block';
         $bc('#beatCalcPause').style.display = 'none';
         this.setStatus('已暂停');
     }
+    
+    getCurrentTime() {
+        if (!this.isPlaying || !this.audioCtx) {
+            return this.playbackOffset;
+        }
+        return this.playbackOffset + (this.audioCtx.currentTime - this.playbackStartTime);
+    }
 
     stop() {
         this.pause();
-        this.audio.currentTime = 0;
+        this.playbackOffset = 0;
         $bc('#beatCalcProgress').value = 0;
         $bc('#beatCalcCurrentTime').textContent = '0:00.00';
         this.updateBarDisplay(0);
+        this.lastScheduledBeat = -1;
         this.setStatus('已停止');
     }
 
@@ -246,16 +284,14 @@ class BeatCalculator {
     }
 
     seek(value) {
-        if (!this.audio.src) return;
-        
         let time = parseFloat(value);
-        const duration = this.audio.duration || 0;
+        const duration = this.audioBuffer ? this.audioBuffer.duration : 0;
         
         if (isNaN(time)) time = 0;
         if (time < 0) time = 0;
         if (time > duration) time = duration;
         
-        this.audio.currentTime = time;
+        this.playbackOffset = time;
         $bc('#beatCalcProgress').value = time;
         this.updateDisplay(time);
     }
@@ -275,8 +311,8 @@ class BeatCalculator {
         
         this.rafId = requestAnimationFrame(() => this.updateUi());
         
-        const currentTime = this.audio.currentTime || 0;
-        const duration = this.audio.duration || 0;
+        const currentTime = this.getCurrentTime();
+        const duration = this.audioBuffer ? this.audioBuffer.duration : 0;
         
         if (!isNaN(currentTime) && duration > 0) {
             $bc('#beatCalcProgress').value = currentTime;
@@ -287,6 +323,12 @@ class BeatCalculator {
 
     startSeeking() {
         this.isSeeking = true;
+        this.wasPlaying = this.isPlaying;
+        if (this.audioSource) {
+            this.audioSource.onended = null;
+            this.audioSource.stop();
+            this.audioSource = null;
+        }
     }
 
     stopSeeking() {
@@ -296,60 +338,40 @@ class BeatCalculator {
         const time = parseFloat($bc('#beatCalcProgress').value);
         this.seek(time);
         
-        if (this.isPlaying) {
-            this.audio.play().catch(() => {});
+        if (this.wasPlaying) {
+            if (this.audioSource) {
+                this.audioSource.stop();
+                this.audioSource = null;
+            }
+            
+            this.audioSource = this.audioCtx.createBufferSource();
+            this.audioSource.buffer = this.audioBuffer;
+            this.audioSource.connect(this.gainNode);
+            
+            this.playbackStartTime = this.audioCtx.currentTime;
+            this.playbackOffset = time;
+            
+            this.audioSource.start(0, this.playbackOffset);
+            this.audioSource.onended = () => {
+                this.stop();
+            };
+            
+            this.isPlaying = true;
+            this.lastScheduledBeat = -1;
             this.startUiTicker();
+            this.startMetronome();
         }
     }
 
     updateBarDisplay(currentTime) {
         const bpm = parseFloat($bc('#beatCalcBpm').value) || 120;
-        const beatsPerBar = parseInt($bc('#beatCalcBeatsPerBar').value) || 4;
-        const zeroBar = parseInt($bc('#beatCalcZeroBar').value) || 1;
+        const beatsPerBar = parseFloat($bc('#beatCalcBeatsPerBar').value) || 4;
+        const zeroBar = parseFloat($bc('#beatCalcZeroBar').value) || 1;
         const zeroBeat = parseFloat($bc('#beatCalcZeroBeat').value) || 1;
 
-        const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-        
-        const sortedTempoChanges = [...this.tempoChanges]
-            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-            .map(tc => {
-                const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
-                return { ...tc, abs };
-            })
-            .sort((a, b) => a.abs - b.abs);
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
 
-        let absBeatRaw = zeroAbsBeat;
-        let prevTime = 0;
-        let prevBeat = zeroAbsBeat;
-        let prevBpm = bpm;
-
-        for (const tc of sortedTempoChanges) {
-            const beatsToTc = tc.abs - prevBeat;
-            const timeToTc = beatsToTc * (60 / prevBpm);
-            const tcTime = prevTime + timeToTc;
-
-            if (currentTime < tcTime) {
-                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-                absBeatRaw = prevBeat + beatsElapsed;
-                break;
-            }
-            prevBeat = tc.abs;
-            prevTime = tcTime;
-            prevBpm = tc.bpm;
-            absBeatRaw = tc.abs;
-        }
-        if (currentTime >= prevTime) {
-            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
-            absBeatRaw = prevBeat + beatsElapsed;
-        }
-
-        const barNum = Math.max(1, Math.floor((absBeatRaw - 1) / beatsPerBar) + 1);
-        const beatInBar = absBeatRaw - (barNum - 1) * beatsPerBar;
-
-        const barStr = barNum;
-        const beatStr = beatInBar.toFixed(2);
-
-        $bc('#beatCalcBarValue').textContent = `${barStr}:${beatStr} (小节:拍)`;
+        $bc('#beatCalcBarValue').textContent = `${result.bar}:${result.beat.toFixed(2)} (小节:拍)`;
     }
 
     formatTime(seconds) {
@@ -357,6 +379,121 @@ class BeatCalculator {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return `${mins}:${secs.toFixed(2).padStart(5, '0')}`;
+    }
+    
+    initAudioContext() {
+        if (!this.audioCtx) {
+            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+        }
+        return this.audioCtx;
+    }
+    
+    async preloadSounds() {
+        if (!this.audioCtx) {
+            this.initAudioContext();
+        }
+        
+        if (this.beatBuffer && this.barBuffer) return;
+        
+        try {
+            this.barBuffer = await this.loadBuffer('/static/Metronome/Bar.wav');
+            this.beatBuffer = await this.loadBuffer('/static/Metronome/Beat.wav');
+        } catch (e) {
+            console.error('Failed to preload metronome sounds:', e);
+        }
+    }
+    
+    async loadBuffer(url) {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        return this.audioCtx.decodeAudioData(arrayBuffer);
+    }
+    
+    scheduleSound(buffer, time) {
+        if (!this.audioCtx || !buffer) return;
+        
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioCtx.destination);
+        source.start(time);
+    }
+    
+    startMetronome() {
+        if (this.metronomeTimer) {
+            cancelAnimationFrame(this.metronomeTimer);
+        }
+        this.scheduleNextBeat();
+    }
+    
+    stopMetronome() {
+        if (this.metronomeTimer) {
+            cancelAnimationFrame(this.metronomeTimer);
+            this.metronomeTimer = null;
+        }
+    }
+    
+    scheduleNextBeat() {
+        if (!this.isPlaying || !this.audioCtx || !this.beatBuffer) {
+            this.metronomeTimer = null;
+            return;
+        }
+
+        const ctxTime = this.audioCtx.currentTime;
+        const audioTime = this.getCurrentTime();
+
+        const bpm = parseFloat($bc('#beatCalcBpm').value) || 120;
+        const beatsPerBar = parseFloat($bc('#beatCalcBeatsPerBar').value) || 4;
+        const zeroBar = parseFloat($bc('#beatCalcZeroBar').value) || 1;
+        const zeroBeat = parseFloat($bc('#beatCalcZeroBeat').value) || 1;
+
+        const { bar: curBar, beat: curBeat } = window.BeatUtils.timeToBarBeat(
+            audioTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges
+        );
+
+        const effectiveBpb = window.BeatUtils.getEffectiveBeatsPerBar(
+            curBar, curBeat, beatsPerBar, this.meterChanges
+        );
+
+        const curBeatFloor = Math.floor(curBeat);
+        let nextBar, nextBeat;
+
+        if (curBeatFloor + 1 <= Math.ceil(effectiveBpb)) {
+            nextBar = curBar;
+            nextBeat = curBeatFloor + 1;
+        } else {
+            nextBar = curBar + 1;
+            nextBeat = 1;
+        }
+
+        const nextAbs = window.BeatUtils.barBeatToAbs(
+            nextBar, nextBeat, beatsPerBar, zeroBar, zeroBeat, this.meterChanges
+        );
+
+        if (nextAbs <= this.lastScheduledBeat) {
+            this.metronomeTimer = requestAnimationFrame(() => this.scheduleNextBeat());
+            return;
+        }
+
+        const nextBeatTime = window.BeatUtils.absBeatToTime(
+            nextAbs, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges
+        );
+        const timeToNextBeat = nextBeatTime - audioTime;
+
+        if (timeToNextBeat > 0) {
+            const scheduleTime = ctxTime + timeToNextBeat;
+            this.lastScheduledBeat = nextAbs;
+
+            if (nextBeat === 1) {
+                this.scheduleSound(this.barBuffer, scheduleTime);
+            } else {
+                this.scheduleSound(this.beatBuffer, scheduleTime);
+            }
+        }
+
+        this.metronomeTimer = requestAnimationFrame(() => this.scheduleNextBeat());
     }
 
     setStatus(text) {
@@ -366,10 +503,14 @@ class BeatCalculator {
     show() {
         $bc('#beatCalcWindow').classList.add('show');
         $bc('#beatCalcMinimized').style.display = 'none';
+        this.preloadSounds();
     }
 
     hide() {
         this.stop();
+        this.lastScheduledBeat = -1;
+        this.audioStartTime = 0;
+        this.audioCtxStartTime = 0;
         $bc('#beatCalcWindow').classList.remove('show');
         $bc('#beatCalcMinimized').style.display = 'none';
     }
@@ -386,6 +527,10 @@ class BeatCalculator {
 
     saveTempoChangesToInput() {
         $bc('#beatCalcTempoChanges').value = JSON.stringify(this.tempoChanges);
+    }
+
+    saveMeterChangesToInput() {
+        $bc('#beatCalcMeterChanges').value = JSON.stringify(this.meterChanges);
     }
 
     addTempoChange() {
@@ -460,6 +605,82 @@ class BeatCalculator {
             });
             row.querySelector('.beat-calc-tc-del').addEventListener('click', () => {
                 this.removeTempoChange(originalIdx);
+            });
+            listEl.appendChild(row);
+        });
+    }
+
+    addMeterChange() {
+        const beatsPerBar = parseFloat($bc('#beatCalcBeatsPerBar').value) || 4;
+        
+        let nextBar = 5;
+        if (this.meterChanges.length > 0) {
+            const maxBar = Math.max(...this.meterChanges.map(mc => mc.bar || 1));
+            nextBar = maxBar + 4;
+        }
+        
+        this.meterChanges.push({ bar: nextBar, beat: 1, beats_per_bar: beatsPerBar });
+        this.saveMeterChangesToInput();
+        this.renderMeterChanges();
+    }
+
+    removeMeterChange(index) {
+        this.meterChanges.splice(index, 1);
+        this.saveMeterChangesToInput();
+        this.renderMeterChanges();
+    }
+
+    updateMeterChangeField(index, field, value) {
+        if (this.meterChanges[index]) {
+            this.meterChanges[index][field] = value;
+            this.saveMeterChangesToInput();
+        }
+    }
+
+    renderMeterChanges() {
+        const listEl = $bc('#beatCalcMeterChangesList');
+        if (!listEl) return;
+        
+        const sortedWithIdx = this.meterChanges.map((mc, idx) => ({ ...mc, __idx: idx }))
+            .sort((a, b) => {
+                if (a.bar !== b.bar) return a.bar - b.bar;
+                return a.beat - b.beat;
+            });
+
+        if (sortedWithIdx.length === 0) {
+            listEl.innerHTML = '<div class="beat-calc-tc-empty">暂无变拍规则，点击上方「＋ 添加变拍规则」按钮新增</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        sortedWithIdx.forEach((mc) => {
+            const originalIdx = mc.__idx;
+            const row = document.createElement('div');
+            row.className = 'beat-calc-tc-row';
+            row.dataset.idx = originalIdx;
+            row.innerHTML = `
+                <span class="beat-calc-tc-idx">${mc.__idx + 1}</span>
+                <input type="number" step="1" min="1" class="beat-calc-tc-bar" placeholder="小节" value="${mc.bar || ''}">
+                <span class="beat-calc-tc-sep">:</span>
+                <input type="number" step="0.1" min="1" class="beat-calc-tc-beat" placeholder="拍" value="${mc.beat || ''}">
+                <span class="beat-calc-tc-arrow">→</span>
+                <input type="number" step="0.1" min="1" class="beat-calc-tc-bpm" placeholder="每小节拍数" value="${mc.beats_per_bar || ''}">
+                <button class="beat-calc-tc-del" title="删除">🗑</button>
+            `;
+            row.querySelector('.beat-calc-tc-bar').addEventListener('input', (e) => {
+                const val = parseInt(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'bar', val);
+            });
+            row.querySelector('.beat-calc-tc-beat').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'beat', val);
+            });
+            row.querySelector('.beat-calc-tc-bpm').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                this.updateMeterChangeField(originalIdx, 'beats_per_bar', val);
+            });
+            row.querySelector('.beat-calc-tc-del').addEventListener('click', () => {
+                this.removeMeterChange(originalIdx);
             });
             listEl.appendChild(row);
         });

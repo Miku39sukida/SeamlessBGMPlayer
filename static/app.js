@@ -35,6 +35,7 @@ let loopPhase = 'main';
 let lyricLines = [];
 let activeLyricIndex = -1;
 let tempoChanges = [];
+let meterChanges = [];
 // 加载状态锁
 let isLoadingTrack = false;
 let loadingTrackIdx = -1;
@@ -59,90 +60,24 @@ const fmtTime = (s) => {
 const barBeat = (sec) => {
     if (!activeTrackCfg) return { bar: 0, beat: 0, abs: 0 };
     
-    if (tempoChanges.length === 0) {
-        const absBeatRaw = sec * beatsPerSec + zeroAbsBeat;
-        const currentBeatInt = Math.max(1, Math.floor(absBeatRaw));
-        const bpb = activeTrackCfg.beats_per_bar;
-        const b0 = currentBeatInt - 1;
-        const bar = Math.floor(b0 / bpb) + 1;
-        const beat = (b0 % bpb) + 1;
-        return { bar, beat, abs: absBeatRaw };
-    }
+    const bpm = activeTrackCfg.bpm;
+    const beatsPerBar = activeTrackCfg.beats_per_bar;
+    const zeroBar = activeTrackCfg.audio_zero_bar;
+    const zeroBeat = activeTrackCfg.audio_zero_beat;
     
-    let absBeatRaw = zeroAbsBeat;
-    let prevTime = 0;
-    let prevBeat = zeroAbsBeat;
-    let prevBpm = activeTrackCfg.bpm;
-    
-    for (const tc of tempoChanges) {
-        if (sec < tc.time_sec) {
-            const beatsElapsed = (sec - prevTime) * (prevBpm / 60);
-            absBeatRaw = prevBeat + beatsElapsed;
-            break;
-        }
-        prevBeat = tc.abs;
-        prevTime = tc.time_sec;
-        prevBpm = tc.bpm;
-        absBeatRaw = tc.abs;
-    }
-    if (sec >= prevTime) {
-        const beatsElapsed = (sec - prevTime) * (prevBpm / 60);
-        absBeatRaw = prevBeat + beatsElapsed;
-    }
-    
-    const currentBeatInt = Math.max(1, Math.floor(absBeatRaw));
-    const bpb = activeTrackCfg.beats_per_bar;
-    const b0 = currentBeatInt - 1;
-    const bar = Math.floor(b0 / bpb) + 1;
-    const beat = (b0 % bpb) + 1;
-    return { bar, beat, abs: absBeatRaw };
+    const result = window.BeatUtils.timeToBarBeat(sec, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+    return result;
 };
 
 const secFromBarBeat = (bar, beat) => {
     if (!activeTrackCfg) return 0;
     
-    const bpb = activeTrackCfg.beats_per_bar;
-    const targetAbs = (bar - 1) * bpb + beat;
-    const remaining = targetAbs - zeroAbsBeat;
+    const bpm = activeTrackCfg.bpm;
+    const beatsPerBar = activeTrackCfg.beats_per_bar;
+    const zeroBar = activeTrackCfg.audio_zero_bar;
+    const zeroBeat = activeTrackCfg.audio_zero_beat;
     
-    if (remaining <= 0) return 0;
-    
-    if (tempoChanges.length === 0) {
-        return remaining / beatsPerSec;
-    }
-    
-    let time = 0;
-    let prevBeat = zeroAbsBeat;
-    let prevBpm = activeTrackCfg.bpm;
-    
-    for (let i = 0; i < tempoChanges.length; i++) {
-        const tc = tempoChanges[i];
-        if (prevBpm <= 0) prevBpm = activeTrackCfg.bpm;
-        
-        if (tc.abs >= targetAbs) {
-            const beatsInSegment = targetAbs - prevBeat;
-            time += beatsInSegment * (60 / prevBpm);
-            const result = Math.max(0, time);
-            return isNaN(result) ? 0 : result;
-        }
-        
-        const beatsInSegment = tc.abs - prevBeat;
-        if (beatsInSegment > 0) {
-            time += beatsInSegment * (60 / prevBpm);
-        }
-        
-        prevBeat = tc.abs;
-        prevBpm = tc.bpm;
-    }
-    
-    if (prevBpm <= 0) prevBpm = activeTrackCfg.bpm;
-    const finalBeats = targetAbs - prevBeat;
-    if (finalBeats > 0) {
-        time += finalBeats * (60 / prevBpm);
-    }
-    
-    const result = Math.max(0, time);
-    return isNaN(result) ? 0 : result;
+    return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
 };
 
 const ensureCtx = () => {
@@ -969,49 +904,16 @@ const applyTrackCfg = (cfg) => {
     
     tempoChanges = [];
     if (Array.isArray(cfg.tempo_changes)) {
-        const filtered = cfg.tempo_changes
+        tempoChanges = cfg.tempo_changes
             .filter(tc => typeof tc.bar === 'number' && typeof tc.beat === 'number' && typeof tc.bpm === 'number')
-            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-            .map(tc => {
-                const abs = (tc.bar - 1) * cfg.beats_per_bar + tc.beat;
-                return { ...tc, abs };
-            })
-            .sort((a, b) => a.abs - b.abs);
-        
-        let prevTime = 0;
-        let prevBeat = zeroAbsBeat;
-        let prevBpm = cfg.bpm;
-        
-        DLog(`TEMPO CALC: zeroAbsBeat=${zeroAbsBeat}, cfg.bpm=${cfg.bpm}, cfg.beats_per_bar=${cfg.beats_per_bar}`);
-        DLog(`TEMPO CALC: filtered count=${filtered.length}`);
-        
-        for (let i = 0; i < filtered.length; i++) {
-            const tc = filtered[i];
-            if (prevBpm <= 0) prevBpm = cfg.bpm;
-            
-            const beatsToTc = tc.abs - prevBeat;
-            DLog(`  TC[${i}]: ${tc.bar}:${tc.beat} abs=${tc.abs}, prevBeat=${prevBeat}, beatsToTc=${beatsToTc}, prevBpm=${prevBpm}`);
-            
-            if (beatsToTc <= 0) {
-                prevBeat = tc.abs;
-                prevBpm = tc.bpm;
-                DLog(`    SKIP (beatsToTc <= 0)`);
-                continue;
-            }
-            
-            const timeToTc = beatsToTc * (60 / prevBpm);
-            const tcTime = prevTime + timeToTc;
-            
-            DLog(`    → timeToTc=${timeToTc.toFixed(4)}, prevTime=${prevTime.toFixed(4)}, tcTime=${tcTime.toFixed(4)}`);
-            
-            if (!isNaN(tcTime) && tcTime >= 0) {
-                tempoChanges.push({ bar: tc.bar, beat: tc.beat, bpm: tc.bpm, time_sec: tcTime, abs: tc.abs });
-            }
-            
-            prevBeat = tc.abs;
-            prevTime = tcTime;
-            prevBpm = tc.bpm;
-        }
+            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0);
+    }
+    
+    meterChanges = [];
+    if (Array.isArray(cfg.meter_changes)) {
+        meterChanges = cfg.meter_changes
+            .filter(mc => typeof mc.bar === 'number' && typeof mc.beat === 'number' && typeof mc.beats_per_bar === 'number')
+            .filter(mc => mc.bar >= 1 && mc.beat >= 1 && mc.beats_per_bar > 0);
     }
     
     startS = secFromBarBeat(cfg.audio_zero_bar, cfg.audio_zero_beat);
@@ -1298,7 +1200,8 @@ const updateUi = () => {
     if (!currentTrack || !activeTrackCfg) return;
     const s = currentPlaySec();
     const bb = barBeat(s);
-    $('curBeat').textContent = `${bb.bar}:${bb.beat}`;
+    const formattedBeat = Number(bb.beat.toFixed(2));
+    $('curBeat').textContent = `${bb.bar}:${formattedBeat}`;
     $('curMs').textContent = Math.floor(s * 1000).toString();
     $('curSec').textContent = s.toFixed(3);
 
@@ -1311,10 +1214,7 @@ const updateUi = () => {
     updateLyricDisplay();
     updateLyricScrollList();
 
-    const absFloored = Math.max(1, Math.floor(bb.abs));
-    const b0ForDot = absFloored - 1;
-    const bpb = activeTrackCfg.beats_per_bar;
-    const beatIdx = ((b0ForDot % bpb) + bpb) % bpb;
+    const beatIdx = Math.max(0, Math.min(3, Math.floor(bb.beat - 1)));
     if (beatIdx !== lastBeatIdx) {
         for (let i = 1; i <= 4; i++) {
             const dot = $('flashDot' + i);
