@@ -142,6 +142,12 @@
         <button class="beat-calc-add-tempo-btn" id="beatCalcAddTempoChange" style="margin-top:8px;">＋ 添加变速规则</button>
         <input type="hidden" id="beatCalcTempoChanges">
       </div>
+      <div class="beat-calc-section">
+        <label>分段变拍规则（指定小节+拍号切换每小节拍数）</label>
+        <div class="beat-calc-tempo-changes" id="beatCalcMeterChangesList"></div>
+        <button class="beat-calc-add-tempo-btn" id="beatCalcAddMeterChange" style="margin-top:8px;">＋ 添加变拍规则</button>
+        <input type="hidden" id="beatCalcMeterChanges">
+      </div>
     <div class="beat-calc-section">
         <label>播放进度</label>
       <div class="beat-calc-progress-wrap">
@@ -215,6 +221,12 @@
     <input type="hidden" id="beatTapperTempoChanges">
   </div>
   <div class="beat-tapper-section">
+    <label>分段变拍规则（指定小节+拍号切换每小节拍数）</label>
+    <div class="beat-tapper-tempo-changes" id="beatTapperMeterChangesList"></div>
+    <button class="beat-tapper-add-tempo-btn" id="beatTapperAddMeterChange" style="margin-top:8px;">＋ 添加变拍规则</button>
+    <input type="hidden" id="beatTapperMeterChanges">
+  </div>
+  <div class="beat-tapper-section">
     <label>节奏类型</label>
       <div class="beat-tapper-rhythm-types">
         <button class="beat-tapper-rhythm-btn active" data-type="whole">整拍</button>
@@ -273,6 +285,7 @@
   <button id="beatTapperRestore" class="beat-tapper-min-btn">🥁</button>
 </div>
 
+<script src="/static/beat-utils.js"></script>
 <script src="/static/admin.js"></script>
 <script src="/static/beat-calculator.js"></script>
 <script src="/static/beat-tapper.js"></script>
