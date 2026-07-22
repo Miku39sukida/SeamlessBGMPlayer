@@ -966,7 +966,9 @@ const applyTrackCfg = (cfg) => {
     DLog(`  startS=${startS.toFixed(4)} loop=[${loopStartS.toFixed(3)} → ${loopEndS.toFixed(3)}] dur=${loopDurS.toFixed(3)}s`);
     DLog(`  tempoChanges count=${tempoChanges.length}`);
     tempoChanges.forEach((tc, i) => {
-        DLog(`    tc[${i}]: ${tc.bar}:${tc.beat} → ${tc.bpm} BPM, time_sec=${tc.time_sec.toFixed(4)}, abs=${tc.abs}`);
+        const tcTime = secFromBarBeat(tc.bar, tc.beat);
+        const tcAbs = window.BeatUtils.barBeatToAbs(tc.bar, tc.beat, cfg.beats_per_bar, cfg.audio_zero_bar, cfg.audio_zero_beat, meterChanges);
+        DLog(`    tc[${i}]: ${tc.bar}:${tc.beat} → ${tc.bpm} BPM, time_sec=${tcTime.toFixed(4)}, abs=${tcAbs}`);
     });
     if (jumpSegEnabled) {
         DLog(`  jump_seg=[${jumpSegStartS.toFixed(3)} → ${jumpSegEndS.toFixed(3)}] (dur=${(jumpSegEndS-jumpSegStartS).toFixed(3)}s) ENABLED`);
@@ -1002,16 +1004,6 @@ const playTrack = async (idx) => {
         }
         DLog(`playTrack: cfg.name=${cfg.name}`);
         expandCategoryForTrack(idx, true);
-        
-        // 后台加载歌词和音频（不停止当前播放）
-        const lyricEl = $('lyricText');
-        if (lyricEl) {
-            lyricEl.classList.remove('font-teyvat');
-            lyricEl.style.fontFamily = '';
-            if (cfg.font_face === 'teyvat') {
-                lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
-            }
-        }
         
         DLog('playTrack: loading lyrics (background)...');
         const loadedLyricLines = await loadLyrics(cfg, false);
@@ -1051,6 +1043,15 @@ const playTrack = async (idx) => {
         lyricLines = loadedLyricLines || [];
         activeLyricIndex = -1;
         lastDesktopLyricLineIdx = -1;
+        
+        const lyricEl = $('lyricText');
+        if (lyricEl) {
+            lyricEl.classList.remove('font-teyvat');
+            lyricEl.style.fontFamily = '';
+            if (cfg.font_face === 'teyvat') {
+                lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
+            }
+        }
         
         applyTrackCfg(cfg);
         DLog('playTrack: applyTrackCfg done');
