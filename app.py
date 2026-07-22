@@ -350,22 +350,56 @@ def parse_lrc_content(content):
     return merged
 
 
-def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1, tempo_changes=None):
+def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1, tempo_changes=None, meter_changes=None):
     """解析 BRC（Beat-based Lyrics）文本，格式为 [小节:拍]。
     根据 BPM 和零拍偏移配置将节拍时间转换为秒数。
     支持原文译文并行：相同时间戳的连续歌词合并为原文+译文。
-    支持分段变速：tempo_changes 为 [{bar, beat, bpm}] 格式的列表。"""
+    支持分段变速：tempo_changes 为 [{bar, beat, bpm}] 格式的列表。
+    支持分段变拍：meter_changes 为 [{bar, beat, beats_per_bar}] 格式的列表。"""
     entries = []
     if not content:
         return entries
     
-    zero_abs_beat = (audio_zero_bar - 1) * beats_per_bar + audio_zero_beat
+    def bar_beat_to_abs(target_bar, target_beat, bpb, meter_changes_list):
+        sorted_meter = sorted(
+            [mc for mc in (meter_changes_list or [])
+             if isinstance(mc, dict) and 'bar' in mc and 'beat' in mc and 'beats_per_bar' in mc
+             and mc['bar'] >= 1 and mc['beat'] >= 1 and mc['beats_per_bar'] > 0],
+            key=lambda x: (x['bar'], x['beat'])
+        )
+        
+        current_bar = 1
+        current_bpb = bpb
+        abs_beat = 0
+        
+        for mc in sorted_meter:
+            if mc['bar'] > target_bar:
+                break
+            
+            if mc['bar'] == target_bar and mc['beat'] <= target_beat:
+                beats_to_change = (mc['bar'] - current_bar) * current_bpb + (mc['beat'] - 1)
+                abs_beat += beats_to_change
+                current_bar = mc['bar']
+                current_bpb = mc['beats_per_bar']
+                break
+            
+            beats_to_change = (mc['bar'] - current_bar) * current_bpb + (mc['beat'] - 1)
+            abs_beat += beats_to_change
+            current_bar = mc['bar']
+            current_bpb = mc['beats_per_bar']
+        
+        beats_remaining = (target_bar - current_bar) * current_bpb + (target_beat - 1)
+        abs_beat += beats_remaining
+        
+        return abs_beat
+    
+    zero_abs_beat = bar_beat_to_abs(audio_zero_bar, audio_zero_beat, beats_per_bar, meter_changes)
     
     tempo_changes = tempo_changes or []
     tempo_list = []
     for tc in tempo_changes:
         if isinstance(tc, dict) and 'bar' in tc and 'beat' in tc and 'bpm' in tc:
-            abs_beat_val = (tc['bar'] - 1) * beats_per_bar + tc['beat']
+            abs_beat_val = bar_beat_to_abs(tc['bar'], tc['beat'], beats_per_bar, meter_changes)
             tempo_list.append({'abs': abs_beat_val, 'bpm': tc['bpm']})
     tempo_list.sort(key=lambda x: x['abs'])
     
@@ -825,12 +859,21 @@ def get_lyrics(filename):
                 tempo_changes = json.loads(tempo_changes_param)
             except (json.JSONDecodeError, TypeError):
                 tempo_changes = []
+        
+        meter_changes = []
+        meter_changes_param = request.args.get('meter_changes')
+        if meter_changes_param:
+            try:
+                meter_changes = json.loads(meter_changes_param)
+            except (json.JSONDecodeError, TypeError):
+                meter_changes = []
+        
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
             content = fh.read()
         if ext.lower() == '.brc':
             lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
                                        audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat,
-                                       tempo_changes=tempo_changes)
+                                       tempo_changes=tempo_changes, meter_changes=meter_changes)
         else:
             lines = parse_lrc_content(content)
         return jsonify({"ok": True, "data": {"lines": lines}})
