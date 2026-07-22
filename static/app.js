@@ -36,6 +36,9 @@ let lyricLines = [];
 let activeLyricIndex = -1;
 let tempoChanges = [];
 let meterChanges = [];
+let lastDesktopLyricLineIdx = -1;
+let lastDesktopLyricSendTs = 0;
+let desktopLyricHiddenTimer = null;
 // 加载状态锁
 let isLoadingTrack = false;
 let loadingTrackIdx = -1;
@@ -805,13 +808,20 @@ const setLyricText = (entry, currentSec, lineEndTime = null) => {
     }
     
     if (window.electronAPI && window.electronAPI.updateDesktopLyric) {
-        window.electronAPI.updateDesktopLyric({ 
-            text: lyricText, 
-            translation: lyricTranslation,
-            karaoke: entry?.karaoke || [],
-            lineEndTime: lineEndTime,
-            currentTime: currentSec
-        });
+        const now = performance.now();
+        const lineChanged = activeLyricIndex !== lastDesktopLyricLineIdx;
+        const timeSyncNeeded = now - lastDesktopLyricSendTs > 500;
+        if (lineChanged || timeSyncNeeded) {
+            window.electronAPI.updateDesktopLyric({
+                text: lyricText,
+                translation: lyricTranslation,
+                karaoke: entry?.karaoke || [],
+                lineEndTime: lineEndTime,
+                currentTime: currentSec
+            });
+            lastDesktopLyricLineIdx = activeLyricIndex;
+            lastDesktopLyricSendTs = now;
+        }
     }
 };
 
@@ -839,6 +849,7 @@ const loadLyrics = async (cfg, applyNow = true) => {
     if (applyNow) {
         lyricLines = [];
         activeLyricIndex = -1;
+        lastDesktopLyricLineIdx = -1;
         setLyricText(null, 0);
     }
     try {
@@ -861,6 +872,9 @@ const loadLyrics = async (cfg, applyNow = true) => {
         }
         if (cfg && Array.isArray(cfg.tempo_changes)) {
             params.push('tempo_changes=' + encodeURIComponent(JSON.stringify(cfg.tempo_changes)));
+        }
+        if (cfg && Array.isArray(cfg.meter_changes)) {
+            params.push('meter_changes=' + encodeURIComponent(JSON.stringify(cfg.meter_changes)));
         }
         if (params.length > 0) {
             url += '?' + params.join('&');
@@ -1036,6 +1050,7 @@ const playTrack = async (idx) => {
         // 应用歌词（此时才更新UI）
         lyricLines = loadedLyricLines || [];
         activeLyricIndex = -1;
+        lastDesktopLyricLineIdx = -1;
         
         applyTrackCfg(cfg);
         DLog('playTrack: applyTrackCfg done');
@@ -1785,5 +1800,28 @@ const init = async () => {
 };
 
 document.addEventListener('DOMContentLoaded', init);
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (!desktopLyricHiddenTimer && window.electronAPI && window.electronAPI.updateDesktopLyric) {
+            desktopLyricHiddenTimer = setInterval(() => {
+                if (!lyricLines.length || !activeTrackCfg) return;
+                const s = currentPlaySec();
+                let idx = 0;
+                while (idx < lyricLines.length - 1 && lyricLines[idx + 1].time_sec <= s) idx += 1;
+                if (idx !== activeLyricIndex) activeLyricIndex = idx;
+                const line = lyricLines[idx] || lyricLines[0];
+                const nextLine = lyricLines[idx + 1];
+                const lineEndTime = nextLine ? nextLine.time_sec : null;
+                setLyricText(line || null, s, lineEndTime);
+            }, 500);
+        }
+    } else {
+        if (desktopLyricHiddenTimer) {
+            clearInterval(desktopLyricHiddenTimer);
+            desktopLyricHiddenTimer = null;
+        }
+    }
+});
 
 })();
