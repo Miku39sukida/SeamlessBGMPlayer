@@ -53,6 +53,16 @@ class BeatCalculator {
         $bc('#beatCalcAddTempoChange').addEventListener('click', () => this.addTempoChange());
         $bc('#beatCalcAddMeterChange').addEventListener('click', () => this.addMeterChange());
 
+        this.metronomeEnabled = true;
+        $bc('#beatCalcMetronome').addEventListener('change', (e) => {
+            this.metronomeEnabled = e.target.checked;
+            if (!this.metronomeEnabled) {
+                this.stopMetronome();
+            } else if (this.isPlaying) {
+                this.startMetronome();
+            }
+        });
+
         const header = $bc('.beat-calc-header');
         let isDragging = false;
         let startX, startY, startLeft, startTop;
@@ -422,6 +432,7 @@ class BeatCalculator {
     }
     
     startMetronome() {
+        if (!this.metronomeEnabled) return;
         if (this.metronomeTimer) {
             cancelAnimationFrame(this.metronomeTimer);
         }
@@ -436,7 +447,7 @@ class BeatCalculator {
     }
     
     scheduleNextBeat() {
-        if (!this.isPlaying || !this.audioCtx || !this.beatBuffer) {
+        if (!this.isPlaying || !this.audioCtx || !this.beatBuffer || !this.metronomeEnabled) {
             this.metronomeTimer = null;
             return;
         }
