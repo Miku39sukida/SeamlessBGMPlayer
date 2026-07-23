@@ -931,6 +931,16 @@ def get_config():
     cfg = load_config()
     return jsonify({"ok": True, "data": cfg})
 
+@app.route('/api/track_config')
+def track_config():
+    dir_id = request.args.get('dir') or ''
+    filename = request.args.get('file') or ''
+    cfg = load_config()
+    for t in cfg.get('tracks', []):
+        if t.get('bgm_dir_id', 'default') == dir_id and t.get('filename') == filename:
+            return jsonify(t)
+    return jsonify({})
+
 @app.route('/api/config', methods=['POST'])
 @login_required
 def save_config():
