@@ -230,6 +230,25 @@ const BeatUtils = {
     barBeatToTime(targetBar, targetBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges) {
         const absBeat = this.barBeatToAbs(targetBar, targetBeat, beatsPerBar, zeroBar, zeroBeat, meterChanges);
         return this.absBeatToTime(absBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+    },
+
+    exportChanges(tempoChanges, meterChanges) {
+        const data = {
+            t: (tempoChanges || []).map(tc => ({ b: tc.bar, d: tc.beat, v: tc.bpm })),
+            m: (meterChanges || []).map(mc => ({ b: mc.bar, d: mc.beat, v: mc.beats_per_bar }))
+        };
+        return btoa(JSON.stringify(data));
+    },
+
+    importChanges(code) {
+        try {
+            const data = JSON.parse(atob(code.trim()));
+            const tempoChanges = (data.t || []).map(tc => ({ bar: tc.b, beat: tc.d, bpm: tc.v }));
+            const meterChanges = (data.m || []).map(mc => ({ bar: mc.b, beat: mc.d, beats_per_bar: mc.v }));
+            return { tempoChanges, meterChanges };
+        } catch (e) {
+            return null;
+        }
     }
 };
 
