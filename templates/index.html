@@ -14,6 +14,7 @@
             <h1 class="title">🎵 无缝循环播放器</h1>
         </div>
         <div class="header-actions">
+            <button id="lanBtn" class="btn btn-secondary" title="局域网访问">📱</button>
             <button id="desktopLyricBtn" class="btn btn-secondary desktop-lyric-btn" title="桌面歌词" style="display:none;">🖥</button>
             <button id="stopBtn" class="btn btn-danger" title="停止播放">⏹ 停止</button>
         </div>
@@ -69,6 +70,10 @@
                 </div>
             </div>
 
+            <div class="loop-actions">
+                <button id="breakLoopBtn" class="btn btn-secondary btn-block" disabled>⏭ 跳出循环</button>
+            </div>
+
             <div class="progress-wrap">
                 <div class="progress-bar" id="progressBar">
                     <div class="progress-fill" id="progressFill"></div>
@@ -115,6 +120,25 @@
     </main>
 </div>
 
+<div class="lan-modal" id="lanModal" style="display:none;">
+    <div class="lan-modal-overlay" id="lanModalOverlay"></div>
+    <div class="lan-modal-content">
+        <div class="lan-modal-header">
+            <h3>📱 局域网访问</h3>
+            <button class="btn btn-small btn-danger" id="lanModalClose">✕</button>
+        </div>
+        <div class="lan-modal-body">
+            <div class="lan-qr" id="lanQr">
+                <div class="lan-qr-placeholder">加载中...</div>
+            </div>
+            <div class="lan-ip-list" id="lanIpList">
+                <div class="lan-ip-item">加载中...</div>
+            </div>
+            <p class="lan-tip">同一 WiFi / 热点下的设备扫码或输入地址访问</p>
+        </div>
+    </div>
+</div>
+
 <footer class="app-footer">
     <div class="footer-content">
         <div class="footer-author">
@@ -130,6 +154,7 @@
 </footer>
 
 <script src="/static/beat-utils.js"></script>
+<script src="/static/qrcode.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 
