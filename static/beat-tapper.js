@@ -64,6 +64,10 @@ class BeatTapper {
         $bt('#beatTapperAddTempoChange').addEventListener('click', () => this.addTempoChange());
         $bt('#beatTapperAddMeterChange').addEventListener('click', () => this.addMeterChange());
 
+        $bt('#beatTapperExportCfg').addEventListener('click', () => this.exportConfig());
+        $bt('#beatTapperImportCfg').addEventListener('click', () => this.importConfig());
+        $bt('#beatTapperLoadFromTrack').addEventListener('click', () => this.loadFromTrack());
+
         $bt('.beat-tapper-rhythm-types').addEventListener('click', (e) => {
             if (e.target.classList.contains('beat-tapper-rhythm-btn')) {
                 this.setRhythmType(e.target.dataset.type);
@@ -552,9 +556,7 @@ class BeatTapper {
             const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
             const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
 
-            const targetTime = window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
-            
-            targetTime = Math.max(0, targetTime);
+            const targetTime = Math.max(0, window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges));
 
             if (targetTime >= 0 && targetTime <= (this.audio.duration || Infinity)) {
                 this.audio.currentTime = targetTime;
@@ -819,6 +821,60 @@ class BeatTapper {
         $bt('#beatTapperMinimized').style.display = 'none';
         $bt('#beatTapperWindow').style.display = 'block';
         $bt('#beatTapperWindow').classList.add('show');
+    }
+
+    exportConfig() {
+        const code = window.BeatUtils.exportChanges(this.tempoChanges, this.meterChanges);
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            $bt('#beatTapperStatus').textContent = '✅ 配置代码已复制到剪贴板';
+        } catch (e) {
+            $bt('#beatTapperStatus').textContent = '配置代码：' + code;
+        }
+        document.body.removeChild(ta);
+    }
+
+    importConfig() {
+        const code = prompt('请粘贴配置代码：');
+        if (!code) return;
+        const result = window.BeatUtils.importChanges(code);
+        if (!result) {
+            $bt('#beatTapperStatus').textContent = '❌ 配置代码无效';
+            return;
+        }
+        this.tempoChanges = result.tempoChanges;
+        this.meterChanges = result.meterChanges;
+        this.renderTempoChanges();
+        this.renderMeterChanges();
+        $bt('#beatTapperStatus').textContent = `✅ 已导入 ${result.tempoChanges.length} 条变速、${result.meterChanges.length} 条变拍`;
+    }
+
+    loadFromTrack() {
+        const select = $bt('#beatTapperFile');
+        const dir = $bt('#beatTapperDir').value;
+        if (!select.value) {
+            $bt('#beatTapperStatus').textContent = '❌ 请先选择一个曲目文件';
+            return;
+        }
+        const fileName = select.value;
+        fetch('/api/track_config?dir=' + encodeURIComponent(dir) + '&file=' + encodeURIComponent(fileName))
+            .then(r => r.json())
+            .then(cfg => {
+                this.tempoChanges = (cfg.tempo_changes || []).map(tc => ({ bar: tc.bar, beat: tc.beat, bpm: tc.bpm }));
+                this.meterChanges = (cfg.meter_changes || []).map(mc => ({ bar: mc.bar, beat: mc.beat, beats_per_bar: mc.beats_per_bar }));
+                this.renderTempoChanges();
+                this.renderMeterChanges();
+                $bt('#beatTapperStatus').textContent = `✅ 已从曲目载入 ${this.tempoChanges.length} 条变速、${this.meterChanges.length} 条变拍`;
+            })
+            .catch(() => {
+                $bt('#beatTapperStatus').textContent = '❌ 载入失败';
+            });
     }
 }
 

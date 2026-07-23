@@ -53,6 +53,10 @@ class BeatCalculator {
         $bc('#beatCalcAddTempoChange').addEventListener('click', () => this.addTempoChange());
         $bc('#beatCalcAddMeterChange').addEventListener('click', () => this.addMeterChange());
 
+        $bc('#beatCalcExportCfg').addEventListener('click', () => this.exportConfig());
+        $bc('#beatCalcImportCfg').addEventListener('click', () => this.importConfig());
+        $bc('#beatCalcLoadFromTrack').addEventListener('click', () => this.loadFromTrack());
+
         this.metronomeEnabled = true;
         $bc('#beatCalcMetronome').addEventListener('change', (e) => {
             this.metronomeEnabled = e.target.checked;
@@ -695,6 +699,60 @@ class BeatCalculator {
             });
             listEl.appendChild(row);
         });
+    }
+
+    exportConfig() {
+        const code = window.BeatUtils.exportChanges(this.tempoChanges, this.meterChanges);
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            $bc('#beatCalcStatus').textContent = '✅ 配置代码已复制到剪贴板';
+        } catch (e) {
+            $bc('#beatCalcStatus').textContent = '配置代码：' + code;
+        }
+        document.body.removeChild(ta);
+    }
+
+    importConfig() {
+        const code = prompt('请粘贴配置代码：');
+        if (!code) return;
+        const result = window.BeatUtils.importChanges(code);
+        if (!result) {
+            $bc('#beatCalcStatus').textContent = '❌ 配置代码无效';
+            return;
+        }
+        this.tempoChanges = result.tempoChanges;
+        this.meterChanges = result.meterChanges;
+        this.renderTempoChanges();
+        this.renderMeterChanges();
+        $bc('#beatCalcStatus').textContent = `✅ 已导入 ${result.tempoChanges.length} 条变速、${result.meterChanges.length} 条变拍`;
+    }
+
+    loadFromTrack() {
+        const select = $bc('#beatCalcFile');
+        const dir = $bc('#beatCalcDir').value;
+        if (!select.value) {
+            $bc('#beatCalcStatus').textContent = '❌ 请先选择一个曲目文件';
+            return;
+        }
+        const fileName = select.value;
+        fetch('/api/track_config?dir=' + encodeURIComponent(dir) + '&file=' + encodeURIComponent(fileName))
+            .then(r => r.json())
+            .then(cfg => {
+                this.tempoChanges = (cfg.tempo_changes || []).map(tc => ({ bar: tc.bar, beat: tc.beat, bpm: tc.bpm }));
+                this.meterChanges = (cfg.meter_changes || []).map(mc => ({ bar: mc.bar, beat: mc.beat, beats_per_bar: mc.beats_per_bar }));
+                this.renderTempoChanges();
+                this.renderMeterChanges();
+                $bc('#beatCalcStatus').textContent = `✅ 已从曲目载入 ${this.tempoChanges.length} 条变速、${this.meterChanges.length} 条变拍`;
+            })
+            .catch(() => {
+                $bc('#beatCalcStatus').textContent = '❌ 载入失败';
+            });
     }
 }
 

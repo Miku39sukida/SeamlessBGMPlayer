@@ -919,6 +919,27 @@
     background: rgba(138, 180, 248, 0.15);
 }
 
+.beat-calc-config-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.beat-calc-config-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.1);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.beat-calc-config-btn:hover {
+    background: rgba(255,255,255,0.2);
+}
+
 .beat-calc-tempo-changes {
     display: flex;
     flex-direction: column;

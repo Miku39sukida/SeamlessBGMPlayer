@@ -486,6 +486,11 @@ function renderTrackCard(t, index) {
       <div class="meter-changes-list" data-k="meter_changes"></div>
       <button class="btn btn-small btn-primary" data-act="add-meter-change" style="margin-top:8px;">＋ 添加变拍规则</button>
     </div>
+
+    <div class="section-title">📦 配置导入</div>
+    <div class="field">
+      <button class="btn btn-small btn-primary" data-act="import-changes" style="margin-top:8px;">📥 从配置代码导入变速/变拍</button>
+    </div>
     </div>
   `;
 
@@ -703,6 +708,21 @@ function renderTrackCard(t, index) {
     }
     
     t.meter_changes.push({ bar: nextBar, beat: 1, beats_per_bar: beatsPerBar });
+    renderMeterChanges();
+    markDirty(card);
+  });
+
+  card.querySelector('[data-act="import-changes"]').addEventListener('click', () => {
+    const code = prompt('请粘贴配置代码：');
+    if (!code) return;
+    const result = window.BeatUtils.importChanges(code);
+    if (!result) {
+      alert('❌ 配置代码无效');
+      return;
+    }
+    t.tempo_changes = result.tempoChanges;
+    t.meter_changes = result.meterChanges;
+    renderTempoChanges();
     renderMeterChanges();
     markDirty(card);
   });
