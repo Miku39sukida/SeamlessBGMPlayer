@@ -177,9 +177,14 @@ let _guardOnended = (track, label) => {
             const raw = getRawPlaybackPos(track);
             DLog(`[onended] track[${track.label}] ${label} source ended naturally; raw=${raw.toFixed(3)} audioDur=${(audioDurS||0).toFixed(3)} stopSched=${track.stopScheduled}`);
             if (track === currentTrack && !track.stopScheduled) {
-                DLog(`  → currentTrack ended without explicit stop; force jump now`);
-                if (loopMode === 'single') doSingleJump();
-                else doDualSwitch();
+                if (loopBroken) {
+                    DLog(`  → loopBroken, natural end → stopAll`);
+                    stopAll();
+                } else {
+                    DLog(`  → currentTrack ended without explicit stop; force jump now`);
+                    if (loopMode === 'single') doSingleJump();
+                    else doDualSwitch();
+                }
             }
         };
     } catch(_) {}
@@ -1121,6 +1126,14 @@ const playTrack = async (idx) => {
 
         scheduleNextLoop();
         startUiTicker();
+
+        loopBroken = false;
+        const breakBtn = $('breakLoopBtn');
+        if (breakBtn) {
+            breakBtn.disabled = false;
+            breakBtn.textContent = '⏭ 跳出循环';
+        }
+
         DLog('playTrack: COMPLETE');
     } catch (e) {
         DLog('playTrack FATAL ERROR:', e.message, e.stack);
@@ -1168,6 +1181,38 @@ const updateLoadingUI = (loading, idx) => {
     }
 };
 
+let loopBroken = false;
+
+const breakLoop = () => {
+    if (!currentTrack || !audioBuffer || loopBroken) return;
+
+    loopBroken = true;
+
+    clearTimeout(loopSchedulerTimer);
+    loopSchedulerTimer = null;
+
+    const raw = getRawPlaybackPos(currentTrack);
+    if (raw >= audioDurS - 0.05) return;
+
+    if (currentTrack && currentTrack.source) {
+        try {
+            currentTrack.source.loop = false;
+        } catch(_) {}
+    }
+
+    fadeOutS = 0;
+    loopEndS = audioDurS;
+    loopDurS = Math.max(0, loopEndS - loopStartS);
+
+    const btn = $('breakLoopBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '✓ 已跳出循环';
+    }
+
+    DLog(`breakLoop: loop disabled, natural end at ${audioDurS.toFixed(3)}s`);
+};
+
 const stopAll = async () => {
     clearTimeout(loopSchedulerTimer);
     loopSchedulerTimer = null;
@@ -1198,6 +1243,13 @@ const stopAll = async () => {
     currentTrack = null;
     nextTrack = null;
     audioBuffer = null;
+    loopBroken = false;
+
+    const breakBtn = $('breakLoopBtn');
+    if (breakBtn) {
+        breakBtn.disabled = true;
+        breakBtn.textContent = '⏭ 跳出循环';
+    }
     
     if (audioCtx) {
         try {
@@ -1808,6 +1860,8 @@ const init = async () => {
     renderTrackList();
 
     $('stopBtn').addEventListener('click', async () => await stopAll());
+
+    $('breakLoopBtn').addEventListener('click', () => breakLoop());
 
     $('volumeSlider').addEventListener('input', (e) => {
         const v = parseInt(e.target.value);

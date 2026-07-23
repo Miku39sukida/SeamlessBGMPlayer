@@ -744,6 +744,20 @@ body.drawer-open .drawer-overlay {
     font-feature-settings: "tnum";
 }
 
+.loop-actions {
+    margin-top: 4px;
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.btn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .progress-wrap {
     display: flex;
     flex-direction: column;
