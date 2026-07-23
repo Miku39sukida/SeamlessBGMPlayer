@@ -454,7 +454,7 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
             for bar_str, beat_str in matches:
                 bar = int(bar_str)
                 beat = float(beat_str)
-                abs_beat = (bar - 1) * beats_per_bar + beat
+                abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
                 time_sec = beat_to_sec(abs_beat)
                 entries.append({
                     'time_sec': max(0, time_sec),
@@ -467,7 +467,7 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
         for bar_str, beat_str in matches:
             bar = int(bar_str)
             beat = float(beat_str)
-            abs_beat = (bar - 1) * beats_per_bar + beat
+            abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
             time_sec = beat_to_sec(abs_beat)
             entries.append({
                 'time_sec': max(0, time_sec),
@@ -572,6 +572,10 @@ def login_page():
 @login_required
 def admin_page():
     return send_from_directory('templates', 'admin.html')
+
+@app.route('/bpmtest')
+def bpmtest_page():
+    return send_from_directory('templates', 'bpmtest.html')
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
