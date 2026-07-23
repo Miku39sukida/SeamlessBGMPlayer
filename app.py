@@ -3,6 +3,7 @@ import re
 import json
 import uuid
 import secrets
+import socket
 import mimetypes
 from functools import wraps
 from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect
@@ -961,17 +962,67 @@ def save_config():
     save_config_raw(cfg)
     return jsonify({"ok": True})
 
+def _get_lan_ips():
+    ips = []
+    hostname = socket.gethostname()
+    try:
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip != '127.0.0.1' and not ip.startswith('169.254') and ip not in ips:
+                ips.append(ip)
+    except:
+        pass
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        if ip not in ips:
+            ips.append(ip)
+    except:
+        pass
+    finally:
+        s.close()
+    return ips
+
+@app.route('/api/lan_ips')
+def lan_ips():
+    ips = _get_lan_ips()
+    return jsonify({"ips": ips, "port": 5001})
+
 if __name__ == '__main__':
     os.makedirs(BGM_DIR, exist_ok=True)
     os.makedirs('static', exist_ok=True)
     os.makedirs('templates', exist_ok=True)
     _load_password()
     load_config()
+
+    ips = _get_lan_ips()
+
     print("=" * 60)
     print("  无缝循环播放器启动")
-    print("  主页:   http://127.0.0.1:5001/")
+    if ips:
+        for ip in ips:
+            url = f"http://{ip}:5001/"
+            print(f"  局域网: {url}")
+    print("  本机:   http://127.0.0.1:5001/")
     print("  登录:   http://127.0.0.1:5001/login")
     print("  管理:   http://127.0.0.1:5001/admin")
     print("  默认密码: admin123  (可在 password.txt 中修改)")
+
+    # 生成 QR 码方便手机/其他设备扫码访问
+    if ips:
+        try:
+            import qrcode
+            url = f"http://{ips[0]}:5001/"
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(url)
+            qr.make(fit=True)
+            print()
+            print(f"  扫码访问 {url}")
+            qr.print_ascii(invert=True)
+        except ImportError:
+            print("  提示: pip install qrcode 可生成扫码访问的二维码")
+
     print("=" * 60)
+
     app.run(host='0.0.0.0', port=5001, debug=False)
