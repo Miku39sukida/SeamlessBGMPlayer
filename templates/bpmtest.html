@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BPM测试</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #39C5BB;
+  font-family: -apple-system, "Microsoft YaHei", sans-serif;
+  color: #fff;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+.container {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+.hint { font-size: 15px; margin-bottom: 20px; opacity: 0.9; }
+.result-box {
+  background: rgba(0,0,0,0.25);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.result-row:last-child { border-bottom: none; }
+.result-label { font-size: 14px; opacity: 0.8; }
+.result-value {
+  font-size: 28px;
+  font-weight: bold;
+  font-family: "Courier New", monospace;
+  min-width: 100px;
+  text-align: right;
+}
+.result-row.small .result-value { font-size: 18px; }
+
+.tap-area {
+  width: 100%;
+  height: 180px;
+  background: rgba(255,255,255,0.15);
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: bold;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.05s, background 0.1s;
+  margin-bottom: 16px;
+}
+.tap-area:active {
+  transform: scale(0.97);
+  background: rgba(255,255,255,0.3);
+}
+.tap-area.tapped {
+  background: rgba(255,255,255,0.35);
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.controls label { font-size: 14px; }
+.controls select, .controls button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.controls select option { color: #333; }
+.controls button:active { background: rgba(255,255,255,0.35); }
+
+.text-fallback {
+  font-size: 13px;
+  opacity: 0.7;
+  margin-bottom: 16px;
+}
+.text-fallback input {
+  width: 30px;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,0.4);
+  background: rgba(0,0,0,0.2);
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.footer {
+  font-size: 12px;
+  opacity: 0.6;
+  line-height: 1.6;
+}
+.footer a { color: #fff; }
+.footer hr { border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 12px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="hint">跟着音乐的节奏点击下方区域测试BPM</div>
+
+  <div class="result-box">
+    <div class="result-row">
+      <span class="result-label">测试结果</span>
+      <input class="result-value" id="T_AVG" readonly>
+    </div>
+    <div class="result-row small">
+      <span class="result-label">整体速度</span>
+      <input class="result-value" id="T_WHOLE" readonly>
+    </div>
+    <div class="result-row small">
+      <span class="result-label">按键次数</span>
+      <input class="result-value" id="T_TAP" readonly>
+    </div>
+  </div>
+
+  <div class="tap-area" id="tapArea">👇 点击这里</div>
+
+  <div class="controls">
+    <label>暂停</label>
+    <select id="T_WAIT">
+      <option value="1">1秒</option>
+      <option value="2" selected>2秒</option>
+      <option value="3">3秒</option>
+      <option value="4">4秒</option>
+      <option value="5">5秒</option>
+    </select>
+    <button id="T_RESET">重置</button>
+  </div>
+
+  <div class="text-fallback">
+    没反应？可在文本框内输入 &gt; <input id="T_FOCUS" maxlength="1"&gt; &lt; 进行测试
+  </div>
+
+  <div class="footer">
+    每小节点击一次以获取每分钟测试速度，可将自动重置间隔设为最大5秒
+    <hr>
+    若要查看英文原版页面请点<a href="https://www.all8.com/tools/bpm.htm" target="_blank" rel="noopener">这里</a><br>
+    翻译by: <a href="https://space.bilibili.com/592777997" target="_blank" rel="noopener">ボーカロイド大好き（B站）</a>
+  </div>
+</div>
+
+<script>
+var count = 0;
+var msecsFirst = 0;
+var msecsPrevious = 0;
+
+function ResetCount() {
+  count = 0;
+  document.getElementById('T_AVG').value = "";
+  document.getElementById('T_TAP').value = "";
+}
+
+function TapForBPM() {
+  var waitVal = parseFloat(document.getElementById('T_WAIT').value) || 2;
+  var msecs = Date.now();
+  if ((msecs - msecsPrevious) > 1000 * waitVal) {
+    count = 0;
+  }
+
+  if (count == 0) {
+    document.getElementById('T_AVG').value = "First Beat";
+    document.getElementById('T_TAP').value = "First Beat";
+    msecsFirst = msecs;
+    count = 1;
+  } else {
+    var bpmAvg = 60000 * count / (msecs - msecsFirst);
+    document.getElementById('T_AVG').value = Math.round(bpmAvg * 100) / 100;
+    document.getElementById('T_WHOLE').value = Math.round(bpmAvg);
+    count++;
+    document.getElementById('T_TAP').value = count;
+  }
+  msecsPrevious = msecs;
+
+  var tapArea = document.getElementById('tapArea');
+  tapArea.classList.add('tapped');
+  setTimeout(function() { tapArea.classList.remove('tapped'); }, 100);
+}
+
+document.addEventListener('keypress', TapForBPM);
+document.getElementById('tapArea').addEventListener('click', TapForBPM);
+document.getElementById('tapArea').addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  TapForBPM();
+}, { passive: false });
+document.getElementById('T_RESET').addEventListener('click', ResetCount);
+</script>
+</body>
+</html>
