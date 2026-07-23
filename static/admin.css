@@ -881,6 +881,44 @@
     min-height: 18px;
 }
 
+.beat-calc-bottom-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    padding: 0 4px;
+}
+
+.beat-calc-metronome-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-light);
+    cursor: pointer;
+    user-select: none;
+}
+
+.beat-calc-metronome-toggle input {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    accent-color: #ff6eb4;
+}
+
+.beat-calc-bpm-link {
+    font-size: 13px;
+    color: #8ab4f8;
+    text-decoration: none;
+    padding: 4px 10px;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+
+.beat-calc-bpm-link:hover {
+    background: rgba(138, 180, 248, 0.15);
+}
+
 .beat-calc-tempo-changes {
     display: flex;
     flex-direction: column;
