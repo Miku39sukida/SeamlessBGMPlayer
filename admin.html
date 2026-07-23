@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置管理 - 无缝循环播放器</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<div class="admin-app">
+  <header class="admin-header">
+    <div class="left">
+      <a href="/" class="back-link">← 返回播放</a>
+      <h1 class="title">⚙️ 配置管理</h1>
+    </div>
+    <div class="right">
+      <button id="chgPwdBtn" class="btn btn-small btn-warning">改密码</button>
+      <button id="logoutBtn" class="btn btn-small btn-danger">退出登录</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <div class="toolbar">
+      <div class="track-count">共 <b id="trackCount">0</b> 首曲目 · <b id="dirCount">0</b> 个 BGM 目录</div>
+      <div class="toolbar-actions">
+        <div class="search-box-wrap" title="全局 BGM 文件名搜索（刷新列表时应用）">
+          <input type="search" id="globalFileSearch" placeholder="🔍 搜索 BGM 文件名…">
+        </div>
+        <button id="refreshBgmBtn" class="btn btn-small" title="重新扫描所有已存在目录">🔄 刷新文件列表</button>
+    <button id="toggleDirPanelBtn" class="btn btn-small" style="background:linear-gradient(135deg,#9a7bff,#6e56d6);">📂 管理 BGM 目录</button>
+    <button id="beatCalcBtn" class="btn btn-small" style="background:linear-gradient(135deg,#ff96c0,#ff6eb4);">🎵 节拍计算器</button>
+    <button id="beatTapperBtn" class="btn btn-small" style="background:linear-gradient(135deg,#ffb347,#ff96c0);">🥁 节奏打点</button>
+    <button id="addBtn" class="btn btn-primary">+ 添加曲目</button>
+        <button id="saveBtn" class="btn btn-primary" style="background:linear-gradient(135deg,#5cd08e,#3ea970);">💾 保存配置</button>
+      </div>
+    </div>
+
+    <!-- ========== BGM 目录管理面板（可折叠） ========== -->
+    <section class="dir-panel" id="dirPanel" style="display:none;">
+      <div class="dir-panel-header">
+        <h3>📂 BGM 多目录管理</h3>
+        <div class="hint">
+          兼容多系统路径：<br>
+          · Windows 示例：<code>C:\Users\XXX\Music</code><br>
+          · Android/手机示例：<code>/sdcard/Music/XXX</code><br>
+          · 本项目相对路径（默认）：<code>./BGM</code>
+        </div>
+      </div>
+      <div class="dir-add-form">
+        <div class="form-group">
+          <label>目录标签（显示用）</label>
+          <input type="text" id="newDirLabel" placeholder="例如：本地音乐 / 手机音乐 / OST合集">
+        </div>
+        <div class="form-group dir-path-group">
+          <label>路径</label>
+          <input type="text" id="newDirPath" placeholder='C:\Users\XXX\Music 或 /sdcard/Music/XXX 或 ./相对路径'>
+        </div>
+        <div class="form-group dir-add-actions">
+          <button id="addDirBtn" class="btn btn-primary">＋ 添加目录</button>
+        </div>
+      </div>
+      <div id="dirList" class="dir-list"></div>
+    </section>
+
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="tracks-container" id="tracksContainer"></div>
+  </main>
+</div>
+
+<div class="modal-mask" id="pwdModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-title">修改管理员密码</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>旧密码</label>
+        <input type="password" id="oldPwd">
+      </div>
+      <div class="form-group">
+        <label>新密码 (≥4位)</label>
+        <input type="password" id="newPwd">
+      </div>
+      <div class="form-group">
+        <label>确认新密码</label>
+        <input type="password" id="newPwd2">
+      </div>
+      <div class="modal-err" id="pwdErr"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-small" id="pwdCancel">取消</button>
+      <button class="btn btn-small btn-primary" id="pwdConfirm">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<div class="beat-calc-window" id="beatCalcWindow">
+  <div class="beat-calc-header">
+    <div class="beat-calc-title">🎵 节拍计算器</div>
+    <div class="beat-calc-controls-right">
+      <button class="beat-calc-minimize" id="beatCalcMinimize">—</button>
+      <button class="beat-calc-close" id="beatCalcClose">✕</button>
+    </div>
+  </div>
+  <div class="beat-calc-body">
+    <div class="beat-calc-section">
+      <label>BGM 文件目录</label>
+      <select id="beatCalcDir" class="beat-calc-select"></select>
+    </div>
+    <div class="beat-calc-section">
+      <label>BGM 文件 <span class="hint">(可搜索过滤)</span></label>
+      <div class="beat-calc-file-picker">
+        <input type="search" id="beatCalcFileSearch" class="beat-calc-search" placeholder="🔍 按文件名搜索…">
+        <select id="beatCalcFile" class="beat-calc-select" size="6"></select>
+      </div>
+    </div>
+    <div class="beat-calc-grid">
+      <div class="beat-calc-section">
+        <label>BPM <span class="hint">(每分钟拍数)</span></label>
+        <input type="number" id="beatCalcBpm" value="120" step="0.1" min="10" max="500">
+      </div>
+      <div class="beat-calc-section">
+        <label>拍号 (每小节)</label>
+        <input type="number" id="beatCalcBeatsPerBar" value="4" step="1" min="1" max="16">
+      </div>
+    </div>
+    <div class="beat-calc-grid">
+      <div class="beat-calc-section">
+        <label>零点小节</label>
+        <input type="number" id="beatCalcZeroBar" value="1" step="1" min="1">
+      </div>
+      <div class="beat-calc-section">
+        <label>零点拍</label>
+        <input type="number" id="beatCalcZeroBeat" value="1" step="0.1" min="1">
+      </div>
+    </div>
+    <div class="beat-calc-section">
+        <label>分段变速规则（指定小节+拍号切换BPM）</label>
+        <div class="beat-calc-tempo-changes" id="beatCalcTempoChangesList"></div>
+        <button class="beat-calc-add-tempo-btn" id="beatCalcAddTempoChange" style="margin-top:8px;">＋ 添加变速规则</button>
+        <input type="hidden" id="beatCalcTempoChanges">
+      </div>
+      <div class="beat-calc-section">
+        <label>分段变拍规则（指定小节+拍号切换每小节拍数）</label>
+        <div class="beat-calc-tempo-changes" id="beatCalcMeterChangesList"></div>
+        <button class="beat-calc-add-tempo-btn" id="beatCalcAddMeterChange" style="margin-top:8px;">＋ 添加变拍规则</button>
+        <input type="hidden" id="beatCalcMeterChanges">
+      </div>
+    <div class="beat-calc-section">
+      <div class="beat-calc-config-row">
+        <button class="beat-calc-config-btn" id="beatCalcExportCfg">📋 导出配置</button>
+        <button class="beat-calc-config-btn" id="beatCalcImportCfg">📥 导入配置</button>
+        <button class="beat-calc-config-btn" id="beatCalcLoadFromTrack">🎵 从曲目载入</button>
+      </div>
+    </div>
+    <div class="beat-calc-section">
+        <label>播放进度</label>
+      <div class="beat-calc-progress-wrap">
+        <input type="range" id="beatCalcProgress" min="0" max="100" value="0" step="0.1">
+        <div class="beat-calc-time-display">
+          <span id="beatCalcCurrentTime">0:00.00</span> / <span id="beatCalcTotalTime">0:00.00</span>
+        </div>
+      </div>
+    </div>
+    <div class="beat-calc-bar-display">
+      <div class="beat-calc-bar-label">当前节拍位置</div>
+      <div class="beat-calc-bar-value" id="beatCalcBarValue">1:1 (小节:拍)</div>
+    </div>
+    <div class="beat-calc-controls">
+      <button id="beatCalcPlay" class="beat-calc-btn btn-primary">▶ 播放</button>
+      <button id="beatCalcPause" class="beat-calc-btn" style="display:none;">⏸ 暂停</button>
+      <button id="beatCalcStop" class="beat-calc-btn">⏹ 停止</button>
+    </div>
+    <div class="beat-calc-bottom-row">
+      <label class="beat-calc-metronome-toggle">
+        <input type="checkbox" id="beatCalcMetronome" checked> 节拍器音效
+      </label>
+      <a href="/bpmtest" target="_blank" class="beat-calc-bpm-link" rel="noopener">🔗 BPM测试工具</a>
+    </div>
+    <div class="beat-calc-status" id="beatCalcStatus"></div>
+  </div>
+</div>
+
+<div class="beat-calc-minimized" id="beatCalcMinimized" style="display:none;">
+  <button id="beatCalcRestore" class="beat-calc-min-btn">🎵</button>
+</div>
+
+<div class="beat-tapper-window" id="beatTapperWindow" style="display:none;">
+  <div class="beat-tapper-header">
+    <div class="beat-tapper-title">🥁 节奏打点器</div>
+    <div class="beat-tapper-controls-right">
+      <button class="beat-tapper-minimize" id="beatTapperMinimize">—</button>
+      <button class="beat-tapper-close" id="beatTapperClose">✕</button>
+    </div>
+  </div>
+  <div class="beat-tapper-body">
+    <div class="beat-tapper-section">
+      <label>BGM 文件目录</label>
+      <select id="beatTapperDir" class="beat-tapper-select"></select>
+    </div>
+    <div class="beat-tapper-section">
+      <label>BGM 文件 <span class="hint">(可搜索过滤)</span></label>
+      <div class="beat-tapper-file-picker">
+        <input type="search" id="beatTapperFileSearch" class="beat-tapper-search" placeholder="🔍 按文件名搜索…">
+        <select id="beatTapperFile" class="beat-tapper-select" size="6"></select>
+      </div>
+    </div>
+    <div class="beat-tapper-grid">
+      <div class="beat-tapper-section">
+        <label>BPM <span class="hint">(每分钟拍数)</span></label>
+        <input type="number" id="beatTapperBpm" value="120" step="0.1" min="10" max="500">
+      </div>
+      <div class="beat-tapper-section">
+        <label>拍号 (每小节)</label>
+        <input type="number" id="beatTapperBeatsPerBar" value="4" step="1" min="1" max="16">
+      </div>
+    </div>
+    <div class="beat-tapper-grid">
+      <div class="beat-tapper-section">
+      <label>零点小节</label>
+      <input type="number" id="beatTapperZeroBar" value="1" step="1" min="1">
+    </div>
+    <div class="beat-tapper-section">
+      <label>零点拍</label>
+      <input type="number" id="beatTapperZeroBeat" value="1" step="0.1" min="1">
+    </div>
+  </div>
+  <div class="beat-tapper-section">
+    <label>分段变速规则（指定小节+拍号切换BPM）</label>
+    <div class="beat-tapper-tempo-changes" id="beatTapperTempoChangesList"></div>
+    <button class="beat-tapper-add-tempo-btn" id="beatTapperAddTempoChange" style="margin-top:8px;">＋ 添加变速规则</button>
+    <input type="hidden" id="beatTapperTempoChanges">
+  </div>
+  <div class="beat-tapper-section">
+    <label>分段变拍规则（指定小节+拍号切换每小节拍数）</label>
+    <div class="beat-tapper-tempo-changes" id="beatTapperMeterChangesList"></div>
+    <button class="beat-tapper-add-tempo-btn" id="beatTapperAddMeterChange" style="margin-top:8px;">＋ 添加变拍规则</button>
+    <input type="hidden" id="beatTapperMeterChanges">
+  </div>
+  <div class="beat-tapper-section">
+    <div class="beat-calc-config-row">
+      <button class="beat-calc-config-btn" id="beatTapperExportCfg">📋 导出配置</button>
+      <button class="beat-calc-config-btn" id="beatTapperImportCfg">📥 导入配置</button>
+      <button class="beat-calc-config-btn" id="beatTapperLoadFromTrack">🎵 从曲目载入</button>
+    </div>
+  </div>
+  <div class="beat-tapper-section">
+    <label>节奏类型</label>
+      <div class="beat-tapper-rhythm-types">
+        <button class="beat-tapper-rhythm-btn active" data-type="whole">整拍</button>
+        <button class="beat-tapper-rhythm-btn" data-type="half">半拍</button>
+        <button class="beat-tapper-rhythm-btn" data-type="even">均匀</button>
+        <button class="beat-tapper-rhythm-btn" data-type="swing">摇摆</button>
+        <button class="beat-tapper-rhythm-btn" data-type="triplet">三连音</button>
+      </div>
+    </div>
+    <div class="beat-tapper-section">
+      <label>模式</label>
+      <div class="beat-tapper-mode-types">
+        <button class="beat-tapper-mode-btn active" data-mode="normal">通常</button>
+        <button class="beat-tapper-mode-btn" data-mode="translation">翻译</button>
+      </div>
+    </div>
+    <div class="beat-tapper-section">
+      <label>播放进度</label>
+      <div class="beat-tapper-progress-wrap">
+        <input type="range" id="beatTapperProgress" min="0" max="100" value="0" step="0.1">
+        <div class="beat-tapper-time-display">
+          <span id="beatTapperCurrentTime">0:00.00</span> / <span id="beatTapperTotalTime">0:00.00</span>
+        </div>
+      </div>
+    </div>
+    <div class="beat-tapper-bar-display">
+      <div class="beat-tapper-bar-label">当前节拍位置</div>
+      <div class="beat-tapper-bar-value" id="beatTapperBarValue">1:1 (小节:拍)</div>
+    </div>
+    <div class="beat-tapper-tap-area" id="beatTapperTapArea">
+      <div class="beat-tapper-tap-hint">按 <kbd>F3</kbd> 打点 · <kbd>F2</kbd> 撤回 · <kbd>F1</kbd> 跳转</div>
+      <div class="beat-tapper-tap-count">已打点: <span id="beatTapperTapCount">0</span></div>
+    </div>
+    <div class="beat-tapper-mobile-actions">
+      <button class="beat-tapper-mobile-btn" id="beatTapperMobileUndo" title="撤回 (F2)">↩</button>
+      <button class="beat-tapper-mobile-btn" id="beatTapperMobileJump" title="跳转 (F1)">⏩</button>
+    </div>
+    <div class="beat-tapper-lyrics">
+      <div class="beat-tapper-lyrics-label">歌词编辑（每行格式: [小节:拍]歌词，按 F3 在当前行插入节拍）</div>
+      <div class="beat-tapper-editor-wrap">
+        <textarea id="beatTapperEditor" class="beat-tapper-editor" placeholder="在此处输入歌词...&#10;&#10;示例：&#10;[1:1]第一句歌词&#10;[1:2]第二句歌词&#10;[2:1]第三句歌词"></textarea>
+      </div>
+    </div>
+    <div class="beat-tapper-controls">
+      <button id="beatTapperPlay" class="beat-tapper-btn btn-primary">▶ 播放</button>
+      <button id="beatTapperPause" class="beat-tapper-btn" style="display:none;">⏸ 暂停</button>
+      <button id="beatTapperStop" class="beat-tapper-btn">⏹ 停止</button>
+      <button id="beatTapperClear" class="beat-tapper-btn" style="background:var(--danger);">🗑 清空</button>
+      <button id="beatTapperSave" class="beat-tapper-btn" style="background:linear-gradient(135deg,#5cd08e,#3ea970);">� 保存到服务器</button>
+    </div>
+    <div class="beat-tapper-status" id="beatTapperStatus"></div>
+  </div>
+</div>
+
+<div class="beat-tapper-minimized" id="beatTapperMinimized" style="display:none;">
+  <button id="beatTapperRestore" class="beat-tapper-min-btn">🥁</button>
+</div>
+
+<script src="/static/beat-utils.js"></script>
+<script src="/static/admin.js"></script>
+<script src="/static/beat-calculator.js"></script>
+<script src="/static/beat-tapper.js"></script>
+</body>
+</html>
