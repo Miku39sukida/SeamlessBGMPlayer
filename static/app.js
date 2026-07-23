@@ -1721,6 +1721,82 @@ const updateLyricScrollPosition = () => {
     list.style.transform = `translateY(-${offset}px)`;
 };
 
+let lanQrInstance = null;
+
+const generateLanQR = (url) => {
+    const qrContainer = $('lanQr');
+    if (!qrContainer) return;
+    qrContainer.innerHTML = '';
+    if (lanQrInstance) { lanQrInstance.clear && lanQrInstance.clear(); lanQrInstance = null; }
+    lanQrInstance = new QRCode(qrContainer, {
+        text: url,
+        width: 200,
+        height: 200,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
+    });
+};
+
+const openLanModal = async () => {
+    const modal = $('lanModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+
+    const ipList = $('lanIpList');
+    const qrContainer = $('lanQr');
+    ipList.innerHTML = '<div class="lan-ip-item" style="cursor:default;">加载中...</div>';
+    qrContainer.innerHTML = '<div class="lan-qr-placeholder">选择地址生成二维码</div>';
+
+    try {
+        const r = await fetch('/api/lan_ips');
+        const data = await r.json();
+        const ips = data.ips || [];
+        const port = data.port || 5001;
+
+        if (ips.length === 0) {
+            ipList.innerHTML = '<div class="lan-ip-item" style="cursor:default;">未检测到局域网 IP</div>';
+            return;
+        }
+
+        ipList.innerHTML = '';
+        let selectedUrl = null;
+
+        ips.forEach((ip, idx) => {
+            const url = `http://${ip}:${port}/`;
+            const item = document.createElement('div');
+            item.className = 'lan-ip-item';
+            item.dataset.url = url;
+            item.innerHTML = `<span class="ip-label">地址</span>${url}`;
+            item.addEventListener('click', () => {
+                ipList.querySelectorAll('.lan-ip-item').forEach(el => el.classList.remove('selected'));
+                item.classList.add('selected');
+                generateLanQR(url);
+            });
+            ipList.appendChild(item);
+
+            if (idx === 0) {
+                selectedUrl = url;
+            }
+        });
+
+        if (selectedUrl) {
+            const firstItem = ipList.querySelector('.lan-ip-item');
+            if (firstItem) firstItem.classList.add('selected');
+            generateLanQR(selectedUrl);
+        }
+
+    } catch (e) {
+        console.warn('load lan ips err:', e);
+        ipList.innerHTML = '<div class="lan-ip-item" style="cursor:default;">加载失败</div>';
+    }
+};
+
+const closeLanModal = () => {
+    const modal = $('lanModal');
+    if (modal) modal.style.display = 'none';
+};
+
 const init = async () => {
     try {
         const r = await fetch('/api/config', { credentials: 'include' });
@@ -1768,6 +1844,20 @@ const init = async () => {
     if (lmc) lmc.addEventListener('click', closeLyricModal);
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && lmo?.classList.contains('active')) closeLyricModal();
+    });
+
+    // --- LAN modal wiring ---
+    const lanBtn = document.getElementById('lanBtn');
+    if (lanBtn) lanBtn.addEventListener('click', openLanModal);
+    const lanOverlay = document.getElementById('lanModalOverlay');
+    if (lanOverlay) lanOverlay.addEventListener('click', closeLanModal);
+    const lanClose = document.getElementById('lanModalClose');
+    if (lanClose) lanClose.addEventListener('click', closeLanModal);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const lanModal = document.getElementById('lanModal');
+            if (lanModal && lanModal.style.display === 'flex') closeLanModal();
+        }
     });
 
     const lcp = document.getElementById('lyricColorPicker');

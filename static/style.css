@@ -1153,3 +1153,125 @@ body.drawer-open .drawer-overlay {
     0%, 100% { opacity: 0.6; transform: scale(1); }
     50% { opacity: 1; transform: scale(1.08); }
 }
+
+.lan-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.lan-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+}
+
+.lan-modal-content {
+    position: relative;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 400px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: lanModalIn 0.3s ease;
+}
+
+@keyframes lanModalIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.lan-modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 180, 210, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.lan-modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--primary-dark, #d4608a);
+    letter-spacing: 0.05em;
+}
+
+.lan-modal-body {
+    padding: 20px;
+    text-align: center;
+}
+
+.lan-qr {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.lan-qr canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.lan-qr-placeholder {
+    color: #999;
+    font-size: 14px;
+}
+
+.lan-ip-list {
+    text-align: left;
+    margin-bottom: 12px;
+}
+
+.lan-ip-item {
+    padding: 10px 14px;
+    background: rgba(255, 180, 210, 0.15);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-family: monospace;
+    font-size: 14px;
+    color: var(--text, #333);
+    cursor: pointer;
+    transition: background 0.2s;
+    word-break: break-all;
+}
+
+.lan-ip-item:hover {
+    background: rgba(255, 180, 210, 0.25);
+}
+
+.lan-ip-item.selected {
+    background: rgba(255, 150, 200, 0.35);
+    box-shadow: 0 0 0 2px var(--primary, #e87aad) inset;
+}
+
+.lan-ip-item .ip-label {
+    font-size: 11px;
+    color: var(--primary-dark, #d4608a);
+    margin-right: 8px;
+    font-family: inherit;
+}
+
+.lan-tip {
+    font-size: 12px;
+    color: #999;
+    margin: 0;
+    line-height: 1.6;
+}
