@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import uuid
 import secrets
@@ -45,7 +46,14 @@ DEFAULT_CONFIG = {
             "fade_out_beats": 0,
             "crossfade_beats": 0,
             "loop_mode": "single",
-            "font_face": "default"
+            "font_face": "default",
+            "multi_style_enabled": False,
+            "styles": [],
+            "vocal_enabled": False,
+            "vocal_filename": "",
+            "vocal_dir_id": "",
+            "vocal_audio_zero_bar": 1,
+            "vocal_audio_zero_beat": 1
         }
     ]
 }
@@ -839,13 +847,19 @@ def get_bgm(filename):
         return jsonify({"ok": False, "error": "File not found"}), 404
     return send_file(full_path)
 
-@app.route('/api/lyrics/<path:filename>')
-def get_lyrics(filename):
+@app.route('/api/lyrics', methods=['POST'])
+def get_lyrics():
     """返回与当前音频同名的歌词文件内容。若未找到则返回空列表。
     支持 BRC（节拍歌词）格式，根据文件扩展名选择解析方式：.brc 使用节拍解析，.lrc 使用时间戳解析。
     支持分段变速：tempo_changes 参数为 JSON 数组格式。"""
     try:
-        dir_id = request.args.get('dir_id') or ''
+        data = request.get_json(silent=True) or {}
+        filename = data.get('filename')
+        dir_id = data.get('dir_id') or ''
+        
+        if not filename:
+            return jsonify({"ok": False, "error": "缺少文件名"}), 400
+        
         base = os.path.basename(filename)
         full_path = resolve_lrc_file(base, dir_id=dir_id or None)
         if not full_path or not os.path.isfile(full_path):
@@ -853,25 +867,19 @@ def get_lyrics(filename):
         _, ext = os.path.splitext(full_path)
         if ext.lower() not in ('.lrc', '.brc'):
             return jsonify({"ok": True, "data": {"lines": []}})
-        bpm = float(request.args.get('bpm', 120))
-        beats_per_bar = float(request.args.get('beats_per_bar', 4))
-        audio_zero_bar = float(request.args.get('audio_zero_bar', 1))
-        audio_zero_beat = float(request.args.get('audio_zero_beat', 1))
-        tempo_changes = []
-        tempo_changes_param = request.args.get('tempo_changes')
-        if tempo_changes_param:
-            try:
-                tempo_changes = json.loads(tempo_changes_param)
-            except (json.JSONDecodeError, TypeError):
-                tempo_changes = []
         
-        meter_changes = []
-        meter_changes_param = request.args.get('meter_changes')
-        if meter_changes_param:
-            try:
-                meter_changes = json.loads(meter_changes_param)
-            except (json.JSONDecodeError, TypeError):
-                meter_changes = []
+        bpm = float(data.get('bpm', 120))
+        beats_per_bar = float(data.get('beats_per_bar', 4))
+        audio_zero_bar = float(data.get('audio_zero_bar', 1))
+        audio_zero_beat = float(data.get('audio_zero_beat', 1))
+        
+        tempo_changes = data.get('tempo_changes') or []
+        if not isinstance(tempo_changes, list):
+            tempo_changes = []
+        
+        meter_changes = data.get('meter_changes') or []
+        if not isinstance(meter_changes, list):
+            meter_changes = []
         
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
             content = fh.read()
@@ -962,26 +970,113 @@ def save_config():
     save_config_raw(cfg)
     return jsonify({"ok": True})
 
+_VIRTUAL_IFACE_PREFIXES = (
+    'lo', 'tun', 'tap', 'docker', 'veth', 'br-', 'virbr', 'vmnet',
+    'dummy', 'ip6tnl', 'ip6_vti', 'sit', 'gre', 'gretap', 'ppp',
+    'sl', 'can', 'bond', 'vlan', 'macvlan', 'vxlan', 'wlan#',
+    'p2p-dev', 'docker0', 'br0', 'cni', 'flannel', 'cali', 'vnet',
+    'utun', 'awdl', 'llw', 'bridge', 'vboxnet'
+)
+
+
+def _is_virtual_iface(iface):
+    if not iface:
+        return True
+    name = iface.strip().lower()
+    for prefix in _VIRTUAL_IFACE_PREFIXES:
+        if name.startswith(prefix):
+            return True
+    return False
+
+
 def _get_lan_ips():
     ips = []
+
+    def _add_ip(ip):
+        if not ip or ip.startswith('127.') or ip.startswith('169.254') or ip.startswith('0.'):
+            return
+        parts = ip.split('.')
+        if len(parts) != 4:
+            return
+        for p in parts:
+            if not p.isdigit() or int(p) < 0 or int(p) > 255:
+                return
+        if ip not in ips:
+            ips.append(ip)
+
+    if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
+        try:
+            import subprocess
+            import re
+            out = subprocess.check_output(['ip', '-4', '-o', 'addr'], stderr=subprocess.DEVNULL, text=True)
+            for line in out.strip().split('\n'):
+                parts = line.split(None, 2)
+                if len(parts) < 2:
+                    continue
+                iface = parts[1].split('@')[0]
+                if _is_virtual_iface(iface):
+                    continue
+                m = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', line)
+                if m:
+                    _add_ip(m.group(1))
+        except:
+            try:
+                import subprocess
+                import re
+                out = subprocess.check_output(['ifconfig'], stderr=subprocess.DEVNULL, text=True)
+                current_iface = None
+                for line in out.strip().split('\n'):
+                    m = re.match(r'^([a-zA-Z0-9_:\-\.]+)\s+', line)
+                    if m:
+                        current_iface = m.group(1).split(':')[0]
+                    if current_iface and not _is_virtual_iface(current_iface):
+                        m2 = re.search(r'inet\s+(?:addr:)?(\d+\.\d+\.\d+\.\d+)', line)
+                        if m2:
+                            _add_ip(m2.group(1))
+            except:
+                pass
+    elif sys.platform.startswith('win'):
+        try:
+            import subprocess
+            import re
+            out = subprocess.check_output(['ipconfig'], stderr=subprocess.DEVNULL, text=True)
+            skip_adapter = False
+            for line in out.strip().split('\n'):
+                adapter_match = re.match(r'^\s*(.+)适配器\s+(.+):|^\s*(.+)adapter\s+(.+):', line, re.IGNORECASE)
+                if adapter_match:
+                    name = (adapter_match.group(2) or adapter_match.group(4) or '').lower()
+                    skip_keywords = ['虚拟', 'virtual', 'loopback', '回环', 'tunnel', '隧道', 'vpn',
+                                     'vmware', 'virtualbox', 'hyper-v', 'wsl', 'docker', 'veth']
+                    skip_adapter = any(kw in name for kw in skip_keywords)
+                    continue
+                if not skip_adapter:
+                    m = re.search(r'IPv4.*?:\s*(\d+\.\d+\.\d+\.\d+)', line)
+                    if m:
+                        _add_ip(m.group(1))
+        except:
+            pass
+
     hostname = socket.gethostname()
     try:
         for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
             ip = info[4][0]
-            if ip != '127.0.0.1' and not ip.startswith('169.254') and ip not in ips:
-                ips.append(ip)
+            if ip in ips:
+                continue
+            _add_ip(ip)
     except:
         pass
+
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(('8.8.8.8', 80))
         ip = s.getsockname()[0]
         if ip not in ips:
-            ips.append(ip)
+            _add_ip(ip)
     except:
         pass
     finally:
         s.close()
+
     return ips
 
 @app.route('/api/lan_ips')
