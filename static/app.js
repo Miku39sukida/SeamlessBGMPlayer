@@ -1576,18 +1576,14 @@ const playTrack = async (idx) => {
                 const trackA = createTrack(sIdx === -1 ? 'default-A' : `style-${sIdx}-A`);
                 const trackB = createTrack(sIdx === -1 ? 'default-B' : `style-${sIdx}-B`);
 
-                const trackStartTime = isDefault ? now : (audioCtx.currentTime + 0.05);
-                let startOffset;
-                if (isDefault) {
-                    startOffset = startS;
+                const idealStartOffset = startS + offsetDiff;
+                let startOffset, trackStartTime;
+                if (idealStartOffset >= 0) {
+                    startOffset = idealStartOffset;
+                    trackStartTime = now;
                 } else {
-                    const defTrack = styleTracks[-1];
-                    if (defTrack) {
-                        const defRawAtStart = trackStartTime - defTrack.current.startedAtCtx + defTrack.current.startOffset;
-                        startOffset = Math.max(0, defRawAtStart + offsetDiff);
-                    } else {
-                        startOffset = Math.max(0, startS + offsetDiff);
-                    }
+                    startOffset = 0;
+                    trackStartTime = now - idealStartOffset;
                 }
 
                 const ok = playSegmentAt(trackA, startOffset, trackStartTime, {
