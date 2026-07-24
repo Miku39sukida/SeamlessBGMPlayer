@@ -759,18 +759,19 @@ function renderTrackCard(t, index) {
   });
 
   card.querySelector('[data-act="import-changes"]').addEventListener('click', () => {
-    const code = prompt('请粘贴配置代码：');
-    if (!code) return;
-    const result = window.BeatUtils.importChanges(code);
-    if (!result) {
-      alert('❌ 配置代码无效');
-      return;
-    }
-    t.tempo_changes = result.tempoChanges;
-    t.meter_changes = result.meterChanges;
-    renderTempoChanges();
-    renderMeterChanges();
-    markDirty(card);
+    openImportChangesModal((code) => {
+      const result = window.BeatUtils.importChanges(code);
+      if (!result) {
+        showImportChangesErr('❌ 配置代码无效');
+        return false;
+      }
+      t.tempo_changes = result.tempoChanges;
+      t.meter_changes = result.meterChanges;
+      renderTempoChanges();
+      renderMeterChanges();
+      markDirty(card);
+      return true;
+    });
   });
 
   const multiStyleEnabledCheck = card.querySelector('input[data-k="multi_style_enabled"]');
@@ -1096,6 +1097,68 @@ function markDirty(card) {
   else $$('.track-card').forEach(c => c.classList.add('dirty'));
 }
 
+/* ============================ IMPORT CHANGES MODAL ============================ */
+
+let _importChangesCallback = null;
+
+function openImportChangesModal(onConfirm) {
+  _importChangesCallback = onConfirm;
+  const modal = document.getElementById('importChangesModal');
+  const codeEl = document.getElementById('importChangesCode');
+  const errEl = document.getElementById('importChangesErr');
+  if (!modal || !codeEl || !errEl) return;
+  codeEl.value = '';
+  errEl.textContent = '';
+  modal.style.display = '';
+  setTimeout(() => codeEl.focus(), 50);
+}
+
+function showImportChangesErr(msg) {
+  const errEl = document.getElementById('importChangesErr');
+  if (errEl) errEl.textContent = msg;
+}
+
+function closeImportChangesModal() {
+  const modal = document.getElementById('importChangesModal');
+  if (modal) modal.style.display = 'none';
+  _importChangesCallback = null;
+}
+
+function bindImportChangesModal() {
+  const modal = document.getElementById('importChangesModal');
+  const codeEl = document.getElementById('importChangesCode');
+  const cancelBtn = document.getElementById('importChangesCancel');
+  const confirmBtn = document.getElementById('importChangesConfirm');
+  if (!modal || !codeEl || !cancelBtn || !confirmBtn) return;
+
+  cancelBtn.addEventListener('click', closeImportChangesModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeImportChangesModal();
+  });
+  codeEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeImportChangesModal();
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      confirmBtn.click();
+    }
+  });
+  confirmBtn.addEventListener('click', () => {
+    const code = codeEl.value.trim();
+    if (!code) {
+      showImportChangesErr('请粘贴配置代码');
+      return;
+    }
+    if (_importChangesCallback) {
+      const success = _importChangesCallback(code);
+      if (success) closeImportChangesModal();
+    }
+  });
+}
+
+// 暴露给节拍计算器、节奏打点器复用
+window.openImportChangesModal = openImportChangesModal;
+window.showImportChangesErr = showImportChangesErr;
+
 /* ============================ INIT & BIND ============================ */
 
 async function init() {
@@ -1109,6 +1172,8 @@ async function init() {
   } catch (e) {
     setStatus('❌ 初始化失败：' + e.message, 'err');
   }
+
+  bindImportChangesModal();
 
   $('#toggleDirPanelBtn').addEventListener('click', () => {
     const p = $('#dirPanel');

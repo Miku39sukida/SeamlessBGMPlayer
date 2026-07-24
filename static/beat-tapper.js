@@ -841,18 +841,23 @@ class BeatTapper {
     }
 
     importConfig() {
-        const code = prompt('请粘贴配置代码：');
-        if (!code) return;
-        const result = window.BeatUtils.importChanges(code);
-        if (!result) {
-            $bt('#beatTapperStatus').textContent = '❌ 配置代码无效';
+        if (typeof window.openImportChangesModal !== 'function') {
+            $bt('#beatTapperStatus').textContent = '❌ 导入弹窗未就绪';
             return;
         }
-        this.tempoChanges = result.tempoChanges;
-        this.meterChanges = result.meterChanges;
-        this.renderTempoChanges();
-        this.renderMeterChanges();
-        $bt('#beatTapperStatus').textContent = `✅ 已导入 ${result.tempoChanges.length} 条变速、${result.meterChanges.length} 条变拍`;
+        window.openImportChangesModal((code) => {
+            const result = window.BeatUtils.importChanges(code);
+            if (!result) {
+                window.showImportChangesErr('❌ 配置代码无效');
+                return false;
+            }
+            this.tempoChanges = result.tempoChanges;
+            this.meterChanges = result.meterChanges;
+            this.renderTempoChanges();
+            this.renderMeterChanges();
+            $bt('#beatTapperStatus').textContent = `✅ 已导入 ${result.tempoChanges.length} 条变速、${result.meterChanges.length} 条变拍`;
+            return true;
+        });
     }
 
     loadFromTrack() {
