@@ -94,6 +94,23 @@
   </div>
 </div>
 
+<div class="modal-mask" id="importChangesModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-title">📥 导入变速/变拍配置</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>请粘贴配置代码</label>
+        <textarea id="importChangesCode" rows="8" placeholder="在此粘贴配置代码..." style="width:100%; min-height:160px; resize:vertical; font-family:monospace; font-size:13px;"></textarea>
+      </div>
+      <div class="modal-err" id="importChangesErr"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-small" id="importChangesCancel">取消</button>
+      <button class="btn btn-small btn-primary" id="importChangesConfirm">导入</button>
+    </div>
+  </div>
+</div>
+
 <div class="beat-calc-window" id="beatCalcWindow">
   <div class="beat-calc-header">
     <div class="beat-calc-title">🎵 节拍计算器</div>
