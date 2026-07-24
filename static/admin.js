@@ -40,6 +40,13 @@ function defaultTrack() {
     font_face: 'default',
     tempo_changes: [],
     meter_changes: [],
+    multi_style_enabled: false,
+    styles: [],
+    vocal_enabled: false,
+    vocal_filename: '',
+    vocal_dir_id: '',
+    vocal_audio_zero_bar: 1,
+    vocal_audio_zero_beat: 1,
   };
 }
 
@@ -226,6 +233,7 @@ function renderDirPanel() {
         state.bgmList = (data.files || []);
         renderDirPanel();
         $$('.track-card select.file-select').forEach(renderSelectOptionsForOne);
+        $$('.track-card select.vocal-file-select').forEach(s => { if (s._render) s._render(); });
         $('#dirCount').textContent = state.bgmDirs.length;
         setStatus(`✅ 扫描完成：${d.label} 新增/更新共 ${data.file_count || 0} 个文件`, 'ok');
       } catch (e) { setStatus('扫描失败：' + e.message, 'err'); }
@@ -491,6 +499,39 @@ function renderTrackCard(t, index) {
     <div class="field">
       <button class="btn btn-small btn-primary" data-act="import-changes" style="margin-top:8px;">📥 从配置代码导入变速/变拍</button>
     </div>
+
+    <div class="section-title">🎨 多风格切换（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="multi_style_enabled"> 启用多风格切换
+      </label>
+      <div class="styles-panel" data-k="styles_panel" style="display:none;">
+        <div class="styles-list" data-k="styles_list"></div>
+        <button class="btn btn-small btn-primary" data-act="add-style" style="margin-top:8px;">＋ 添加风格</button>
+      </div>
+    </div>
+
+    <div class="section-title">🎤 人声轨 / 伴奏模式（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="vocal_enabled"> 启用人声轨
+      </label>
+      <div class="vocal-panel" data-k="vocal_panel" style="display:none; margin-top:12px;">
+        <div class="field">
+          <label>人声轨文件 <span class="hint">(可搜索过滤；与主曲目同目录)</span></label>
+          <div class="file-picker">
+            <input type="search" class="vocal-file-search" placeholder="🔍 按文件名过滤人声轨…">
+            <select class="vocal-file-select" size="6" data-k="vocal_file_select"></select>
+          </div>
+        </div>
+        <div class="field-row" style="display:flex; gap:10px; align-items:center;">
+          <label style="white-space:nowrap; min-width:70px;">偏移:</label>
+          <input type="number" data-k="vocal_audio_zero_bar" min="1" step="1" value="1" style="width:70px;">
+          <span>:</span>
+          <input type="number" data-k="vocal_audio_zero_beat" min="0.1" step="0.1" value="1" style="width:70px;">
+        </div>
+      </div>
+    </div>
     </div>
   `;
 
@@ -507,6 +548,8 @@ function renderTrackCard(t, index) {
     t.bgm_dir_id = dirSelect.value || 'default';
     markDirty(card);
     renderSelectOptionsForOne($('select.file-select', card));
+    const vocalSel = card.querySelector('select.vocal-file-select');
+    if (vocalSel && vocalSel._render) vocalSel._render();
   });
 
   const fileSelect = $('select.file-select', card);
@@ -531,7 +574,10 @@ function renderTrackCard(t, index) {
   });
 
   $$('input, select', card).forEach(el => {
-    if (el.classList.contains('file-select') || el.classList.contains('fp-search') || el.classList.contains('dir-select')) return;
+    if (el.classList.contains('file-select') || el.classList.contains('fp-search') || el.classList.contains('dir-select') || 
+        el.classList.contains('style-name') || el.classList.contains('style-file-select') || 
+        el.classList.contains('style-file-search') || el.classList.contains('style-file-list') ||
+        el.classList.contains('vocal-file-select') || el.classList.contains('vocal-file-search')) return;
     el.addEventListener('input', () => {
       const k = el.dataset.k;
       if (!k) return;
@@ -727,6 +773,258 @@ function renderTrackCard(t, index) {
     markDirty(card);
   });
 
+  const multiStyleEnabledCheck = card.querySelector('input[data-k="multi_style_enabled"]');
+  const stylesPanel = card.querySelector('[data-k="styles_panel"]');
+  if (multiStyleEnabledCheck) {
+    multiStyleEnabledCheck.checked = !!t.multi_style_enabled;
+    multiStyleEnabledCheck.addEventListener('change', () => {
+      t.multi_style_enabled = multiStyleEnabledCheck.checked;
+      stylesPanel.style.display = t.multi_style_enabled ? '' : 'none';
+      markDirty(card);
+    });
+    stylesPanel.style.display = t.multi_style_enabled ? '' : 'none';
+  }
+
+  const vocalEnabledCheck = card.querySelector('input[data-k="vocal_enabled"]');
+  const vocalPanel = card.querySelector('[data-k="vocal_panel"]');
+  const vocalFileSelect = card.querySelector('select.vocal-file-select');
+  if (vocalEnabledCheck) {
+    vocalEnabledCheck.checked = !!t.vocal_enabled;
+    vocalEnabledCheck.addEventListener('change', () => {
+      t.vocal_enabled = vocalEnabledCheck.checked;
+      vocalPanel.style.display = t.vocal_enabled ? '' : 'none';
+      markDirty(card);
+    });
+    vocalPanel.style.display = t.vocal_enabled ? '' : 'none';
+
+    if (vocalFileSelect) {
+      const vocalSearch = card.querySelector('input.vocal-file-search');
+      const vocalSearchKey = 'vocal_' + t._id;
+      if (vocalSearch) {
+        vocalSearch.value = state.perCardSearch.get(vocalSearchKey) || '';
+        vocalSearch.addEventListener('input', () => {
+          state.perCardSearch.set(vocalSearchKey, vocalSearch.value);
+          renderVocalOptions();
+        });
+      }
+
+      const renderVocalOptions = () => {
+        const dirId = t.bgm_dir_id || 'default';
+        const searchStr = (state.perCardSearch.get(vocalSearchKey) || '').trim().toLowerCase();
+        const filesInDir = state.bgmList.filter(f => f.dir_id === dirId);
+        const filtered = filesInDir.filter(f => {
+          if (!searchStr) return true;
+          return (f.filename || '').toLowerCase().includes(searchStr);
+        });
+        const curFn = t.vocal_filename || '';
+        const curDir = t.vocal_dir_id || dirId;
+
+        let html = '';
+        html += `<option value="">— 未选择人声轨 —</option>`;
+        filtered.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(f => {
+          const v = encodeURIComponent(f.dir_id) + '::' + encodeURIComponent(f.filename);
+          const selected = (curFn && curFn === f.filename && curDir === f.dir_id) ? 'selected' : '';
+          html += `<option value="${v}" ${selected}>${escapeHtml(f.filename)}</option>`;
+        });
+
+        const totalInDir = filesInDir.length;
+        const shown = filtered.length;
+        if (totalInDir === 0) {
+          html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+        } else {
+          html += `<option disabled>— 共 ${shown}/${totalInDir} 个${searchStr ? `（搜索：${escapeHtml(searchStr)}）` : ''} —</option>`;
+        }
+        vocalFileSelect.innerHTML = html;
+
+        if (curFn) {
+          const need = encodeURIComponent(curDir) + '::' + encodeURIComponent(curFn);
+          if (vocalFileSelect.value !== need) {
+            if (Array.from(vocalFileSelect.options).some(o => o.value === need)) {
+              vocalFileSelect.value = need;
+            } else {
+              const fake = document.createElement('option');
+              fake.value = need;
+              fake.selected = true;
+              fake.textContent = `⚠️ 当前：${curFn}（不在搜索结果中）`;
+              vocalFileSelect.insertBefore(fake, vocalFileSelect.firstChild.nextSibling);
+            }
+          }
+        }
+      };
+      vocalFileSelect._render = renderVocalOptions;
+      renderVocalOptions();
+
+      vocalFileSelect.addEventListener('change', () => {
+        const v = vocalFileSelect.value;
+        if (!v) { t.vocal_filename = ''; t.vocal_dir_id = ''; }
+        else {
+          const [encDir, encFn] = v.split('::');
+          t.vocal_dir_id = decodeURIComponent(encDir);
+          t.vocal_filename = decodeURIComponent(encFn);
+        }
+        markDirty(card);
+      });
+    }
+
+    const vAzb = card.querySelector('input[data-k="vocal_audio_zero_bar"]');
+    const vAzbt = card.querySelector('input[data-k="vocal_audio_zero_beat"]');
+    if (vAzb) {
+      vAzb.value = t.vocal_audio_zero_bar != null ? t.vocal_audio_zero_bar : 1;
+      vAzb.addEventListener('input', () => { t.vocal_audio_zero_bar = Number(vAzb.value) || 1; markDirty(card); });
+    }
+    if (vAzbt) {
+      vAzbt.value = t.vocal_audio_zero_beat != null ? t.vocal_audio_zero_beat : 1;
+      vAzbt.addEventListener('input', () => { t.vocal_audio_zero_beat = Number(vAzbt.value) || 1; markDirty(card); });
+    }
+  }
+
+  const renderStyles = () => {
+    const listEl = card.querySelector('[data-k="styles_list"]');
+    if (!listEl) return;
+    t.styles = t.styles || [];
+    
+    listEl.innerHTML = '';
+    if (t.styles.length === 0) {
+      listEl.innerHTML = '<div class="tc-empty-hint">暂无风格配置，点击上方「＋ 添加风格」按钮新增</div>';
+      return;
+    }
+    t.styles.forEach((style, idx) => {
+      const row = document.createElement('div');
+      row.className = 'tempo-change-row style-row';
+      const azb = style.audio_zero_bar != null ? style.audio_zero_bar : t.audio_zero_bar || 1;
+      const azbt = style.audio_zero_beat != null ? style.audio_zero_beat : t.audio_zero_beat || 1;
+      row.innerHTML = `
+        <span class="tc-idx-badge">${idx + 1}</span>
+        <input type="text" class="style-name" placeholder="风格名称" value="${escapeHtml(style.name || '')}">
+        <span class="tc-arrow">→</span>
+        <div class="style-file-picker">
+          <input type="search" class="style-file-search" placeholder="🔍 在此曲目内按文件名过滤…（支持中英文）">
+          <select class="style-file-list" size="6" data-track-id="${t._id}" data-style-idx="${idx}"></select>
+        </div>
+        <div class="style-offset-section">
+          <span class="style-offset-label">偏移:</span>
+          <input type="number" step="1" min="1" class="style-azb" placeholder="小节" value="${azb}">
+          <span class="style-offset-sep">:</span>
+          <input type="number" step="0.1" min="1" class="style-azbt" placeholder="拍" value="${azbt}">
+        </div>
+        <div class="style-actions">
+          <button class="btn btn-icon btn-danger style-up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="btn btn-icon btn-danger style-down" title="下移" ${idx === t.styles.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="btn btn-icon btn-danger style-del" title="删除">🗑</button>
+        </div>
+      `;
+      
+      row.querySelector('.style-name').addEventListener('input', (e) => {
+        style.name = e.target.value;
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-azb').addEventListener('input', (e) => {
+        style.audio_zero_bar = parseInt(e.target.value) || 1;
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-azbt').addEventListener('input', (e) => {
+        style.audio_zero_beat = parseFloat(e.target.value) || 1;
+        markDirty(card);
+      });
+      
+      const styleFileSearch = row.querySelector('.style-file-search');
+      const styleFileList = row.querySelector('.style-file-list');
+      
+      const renderStyleFileOptions = (searchQuery = '') => {
+        const curDirId = t.bgm_dir_id || 'default';
+        const curFn = style.filename || '';
+        let filesInDir = state.bgmList.filter(e => e.dir_id === curDirId);
+        
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          filesInDir = filesInDir.filter(e => (e.filename || '').toLowerCase().includes(q));
+        }
+        
+        let html = '';
+        html += `<option value="">— 未选择音频 —</option>`;
+        filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+          const sel = e.filename === curFn ? 'selected' : '';
+          html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" data-dir="${escapeHtml(e.dir_id)}" data-fn="${escapeHtml(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+        });
+        if (filesInDir.length === 0) {
+          html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+        }
+        styleFileList.innerHTML = html;
+        
+        if (curFn) {
+          const need = encodeURIComponent(curDirId) + '::' + encodeURIComponent(curFn);
+          if (styleFileList.value !== need) {
+            if (Array.from(styleFileList.options).some(o => o.value === need)) {
+              styleFileList.value = need;
+            } else {
+              const fake = document.createElement('option');
+              fake.value = need;
+              fake.selected = true;
+              fake.textContent = `⚠️ 当前：${curFn}`;
+              styleFileList.insertBefore(fake, styleFileList.firstChild.nextSibling);
+            }
+          }
+        }
+      };
+      renderStyleFileOptions();
+      
+      styleFileSearch.addEventListener('input', () => {
+        renderStyleFileOptions(styleFileSearch.value);
+      });
+      
+      styleFileList.addEventListener('change', () => {
+        const v = styleFileList.value;
+        if (!v) {
+          style.filename = '';
+          style.bgm_dir_id = t.bgm_dir_id || 'default';
+        } else {
+          const [encDir, encFn] = v.split('::');
+          style.bgm_dir_id = decodeURIComponent(encDir);
+          style.filename = decodeURIComponent(encFn);
+        }
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-up').addEventListener('click', () => {
+        if (idx <= 0) return;
+        [t.styles[idx - 1], t.styles[idx]] = [t.styles[idx], t.styles[idx - 1]];
+        renderStyles();
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-down').addEventListener('click', () => {
+        if (idx >= t.styles.length - 1) return;
+        [t.styles[idx + 1], t.styles[idx]] = [t.styles[idx], t.styles[idx + 1]];
+        renderStyles();
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-del').addEventListener('click', () => {
+        t.styles.splice(idx, 1);
+        renderStyles();
+        markDirty(card);
+      });
+      
+      listEl.appendChild(row);
+    });
+  };
+  renderStyles();
+  
+  card.querySelector('[data-act="add-style"]').addEventListener('click', () => {
+    t.styles = t.styles || [];
+    t.styles.push({
+      name: `风格 ${t.styles.length + 1}`,
+      filename: '',
+      bgm_dir_id: t.bgm_dir_id || 'default',
+      audio_zero_bar: t.audio_zero_bar || 1,
+      audio_zero_beat: t.audio_zero_beat || 1
+    });
+    renderStyles();
+    markDirty(card);
+  });
+
   // 折叠 / 展开
   const toggleCollapse = (e) => {
     if (e) {
@@ -857,6 +1155,7 @@ async function init() {
         await refreshBgmList(s);
         renderDirPanel();
         $$('.track-card select.file-select').forEach(renderSelectOptionsForOne);
+        $$('.track-card select.vocal-file-select').forEach(s => { if (s._render) s._render(); });
         setStatus(`✅ 搜索完成：共匹配 ${state.bgmList.length} 个文件`, 'ok');
       } catch (err) { setStatus('搜索失败：' + err.message, 'err'); }
     }
