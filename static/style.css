@@ -941,6 +941,22 @@ body.drawer-open .drawer-overlay {
     flex-shrink: 0;
 }
 
+.style-row .style-same-lyrics-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #666;
+    white-space: nowrap;
+    flex-shrink: 0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.style-row .style-same-lyrics-label input[type="checkbox"] {
+    cursor: pointer;
+}
+
 .btn-block {
     width: 100%;
 }

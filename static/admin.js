@@ -907,6 +907,10 @@ function renderTrackCard(t, index) {
           <span class="style-offset-sep">:</span>
           <input type="number" step="0.1" min="1" class="style-azbt" placeholder="拍" value="${azbt}">
         </div>
+        <label class="style-same-lyrics-label">
+          <input type="checkbox" class="style-same-lyrics" ${style.same_lyrics ? 'checked' : ''}>
+          <span>歌词相同</span>
+        </label>
         <div class="style-actions">
           <button class="btn btn-icon btn-danger style-up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="btn btn-icon btn-danger style-down" title="下移" ${idx === t.styles.length - 1 ? 'disabled' : ''}>↓</button>
@@ -926,6 +930,11 @@ function renderTrackCard(t, index) {
       
       row.querySelector('.style-azbt').addEventListener('input', (e) => {
         style.audio_zero_beat = parseFloat(e.target.value) || 1;
+        markDirty(card);
+      });
+      
+      row.querySelector('.style-same-lyrics').addEventListener('change', (e) => {
+        style.same_lyrics = e.target.checked;
         markDirty(card);
       });
       
@@ -1019,7 +1028,8 @@ function renderTrackCard(t, index) {
       filename: '',
       bgm_dir_id: t.bgm_dir_id || 'default',
       audio_zero_bar: t.audio_zero_bar || 1,
-      audio_zero_beat: t.audio_zero_beat || 1
+      audio_zero_beat: t.audio_zero_beat || 1,
+      same_lyrics: false
     });
     renderStyles();
     markDirty(card);

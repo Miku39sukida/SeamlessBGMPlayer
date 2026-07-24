@@ -1205,7 +1205,13 @@ const updateLyricDisplay = () => {
         setLyricText(null, 0);
         return;
     }
-    const s = currentPlaySec();
+    let s = currentPlaySec();
+    if (multiStyleMode && currentStyleIdx >= 0) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry && entry.sameLyrics && entry.offsetDiff != null) {
+            s = s - entry.offsetDiff;
+        }
+    }
     let nextIndex = 0;
     while (nextIndex < lyricLines.length - 1 && lyricLines[nextIndex + 1].time_sec <= s) {
         nextIndex += 1;
@@ -1616,6 +1622,7 @@ const playTrack = async (idx) => {
                     loopStartS: sLoopStart,
                     loopEndS: sLoopEnd,
                     duration: buffer.duration,
+                    sameLyrics: isDefault ? false : (cfg.styles[sIdx] && cfg.styles[sIdx].same_lyrics) || false,
                 };
             };
 
@@ -1840,6 +1847,17 @@ const switchStyle = (styleIdx) => {
 
     (async () => {
         try {
+            let styleSameLyrics = false;
+            if (styleIdx >= 0) {
+                const style = activeTrackCfg.styles[styleIdx];
+                if (style && style.same_lyrics) {
+                    styleSameLyrics = true;
+                }
+            }
+            if (styleSameLyrics) {
+                DLog(`style ${styleIdx}: same_lyrics=true, skip lyrics switch`);
+                return;
+            }
             let styleFilename, styleDirId, styleCfg;
             if (styleIdx === -1) {
                 styleFilename = activeTrackCfg.filename;
