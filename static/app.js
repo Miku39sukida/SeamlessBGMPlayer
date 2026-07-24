@@ -47,7 +47,6 @@ let transitionPos = null;
 let transitionBase = null;
 let transitionStartTime = null;
 let lastLyricIndex = -1;
-let lastScrollOffset = null;
 
 let currentStyleIdx = -1;
 let styleTracks = {};
@@ -304,25 +303,45 @@ const scheduleNextLoop = () => {
     const now = audioCtx.currentTime;
     const raw = getRawPlaybackPos(currentTrack);
 
-    const nearAudioEnd = audioDurS > 0 && raw >= audioDurS - 0.08;
+    let sLoopStart = loopStartS;
+    let sLoopEnd = loopEndS;
+    let sLoopDur = loopDurS;
+    let sDuration = audioDurS || 0;
+    let sJumpStart = jumpSegStartS;
+    let sJumpEnd = jumpSegEndS;
+    if (multiStyleMode) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry) {
+            sLoopStart = entry.loopStartS || loopStartS;
+            sLoopEnd = entry.loopEndS || loopEndS;
+            sLoopDur = Math.max(0.01, sLoopEnd - sLoopStart);
+            sDuration = entry.duration || audioDurS || 0;
+            if (jumpSegEnabled) {
+                sJumpStart = Math.max(0, jumpSegStartS + entry.offsetDiff);
+                sJumpEnd = Math.max(0, jumpSegEndS + entry.offsetDiff);
+            }
+        }
+    }
+
+    const nearAudioEnd = sDuration > 0 && raw >= sDuration - 0.08;
     let distToEnd;
     if (jumpSegEnabled && loopPhase === 'seg') {
-        distToEnd = jumpSegEndS - raw;
+        distToEnd = sJumpEnd - raw;
     } else {
-        if (raw < loopStartS + 0.0001) {
-            distToEnd = loopEndS - raw;
+        if (raw < sLoopStart + 0.0001) {
+            distToEnd = sLoopEnd - raw;
         } else {
-            const into = (raw - loopStartS) % loopDurS;
-            distToEnd = loopDurS - into;
+            const into = (raw - sLoopStart) % sLoopDur;
+            distToEnd = sLoopDur - into;
         }
     }
 
     if (nearAudioEnd) {
-        DLog(`scheduleNextLoop: raw near/over audio end (${raw.toFixed(3)} / ${(audioDurS||0).toFixed(3)}); force jump now`);
+        DLog(`scheduleNextLoop: raw near/over audio end (${raw.toFixed(3)} / ${sDuration.toFixed(3)}); force jump now`);
         distToEnd = 0.002;
     }
     if (distToEnd < 0) distToEnd = 0.002;
-    const safetyLimit = (audioDurS || 0) - raw - 0.05;
+    const safetyLimit = sDuration - raw - 0.05;
     if (safetyLimit > 0.01 && distToEnd > safetyLimit) {
         DLog(`scheduleNextLoop: safety clamp distToEnd from ${distToEnd.toFixed(3)}s to ${safetyLimit.toFixed(3)}s (near audio end)`);
         distToEnd = safetyLimit;
@@ -334,11 +353,16 @@ const scheduleNextLoop = () => {
     if (nearAudioEnd || distToEnd <= lookAhead + 0.001) triggerDelayMs = 1;
     if (triggerDelayMs < 1) triggerDelayMs = 1;
 
-    DLog(`scheduleNextLoop[${loopMode} phase=${loopPhase}]: raw=${raw.toFixed(3)} distToEnd=${distToEnd.toFixed(3)} lookAhead=${(lookAhead*1000).toFixed(0)}ms delay=${triggerDelayMs.toFixed(0)}ms nearEnd=${nearAudioEnd}`);
+    DLog(`scheduleNextLoop[${loopMode} phase=${loopPhase} style=${currentStyleIdx}]: raw=${raw.toFixed(3)} distToEnd=${distToEnd.toFixed(3)} lookAhead=${(lookAhead*1000).toFixed(0)}ms delay=${triggerDelayMs.toFixed(0)}ms nearEnd=${nearAudioEnd}`);
 
     loopSchedulerTimer = setTimeout(() => {
-        if (loopMode === 'single') doSingleJump();
-        else doDualSwitch();
+        if (multiStyleMode) {
+            if (loopMode === 'single') doSingleJumpMultiStyle();
+            else doDualSwitchMultiStyle();
+        } else {
+            if (loopMode === 'single') doSingleJump();
+            else doDualSwitch();
+        }
     }, triggerDelayMs);
 };
 
@@ -397,23 +421,30 @@ const doSingleJumpMultiStyle = () => {
         const now = audioCtx.currentTime;
         const raw = getRawPlaybackPos(activeEntry.current);
 
+        const sLoopStart = activeEntry.loopStartS || loopStartS;
+        const sLoopEnd = activeEntry.loopEndS || loopEndS;
+        const sLoopDur = Math.max(0.01, sLoopEnd - sLoopStart);
+        const offsetDiff = activeEntry.offsetDiff || 0;
+        const sJumpStart = jumpSegEnabled ? Math.max(0, jumpSegStartS + offsetDiff) : 0;
+        const sJumpEnd = jumpSegEnabled ? Math.max(0, jumpSegEndS + offsetDiff) : 0;
+
         let remainingToEnd;
         let isFirst = false;
         let targetOffset;
         let nextPhase = loopPhase;
 
         if (jumpSegEnabled && loopPhase === 'seg') {
-            remainingToEnd = jumpSegEndS - raw;
+            remainingToEnd = sJumpEnd - raw;
             if (remainingToEnd < 0.002) remainingToEnd = 0.002;
             targetOffset = loopStartS;
             nextPhase = 'main';
         } else {
-            if (raw < loopStartS + 0.0001) {
-                remainingToEnd = loopEndS - raw;
+            if (raw < sLoopStart + 0.0001) {
+                remainingToEnd = sLoopEnd - raw;
                 isFirst = true;
             } else {
-                const into = (raw - loopStartS) % loopDurS;
-                remainingToEnd = loopDurS - into;
+                const into = (raw - sLoopStart) % sLoopDur;
+                remainingToEnd = sLoopDur - into;
             }
             if (remainingToEnd < 0.002) remainingToEnd = 0.002;
             if (jumpSegEnabled) {
@@ -481,9 +512,10 @@ const doSingleJumpMultiStyle = () => {
 
         DLog(`MULTI SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)} (${Object.keys(styleTracks).length} styles swapped)`);
         syncVocalOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
+        const curOffsetDiff = activeEntry.offsetDiff || 0;
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
-        transitionPos = targetOffset;
+        transitionPos = Math.max(0, targetOffset + curOffsetDiff);
     } catch (e) {
         DLog('doSingleJumpMultiStyle FATAL:', e.message, e.stack);
     }
@@ -500,16 +532,21 @@ const doDualSwitchMultiStyle = () => {
         }
         const now = audioCtx.currentTime;
         const raw = getRawPlaybackPos(activeEntry.current);
-        const nearAudioEnd = audioDurS > 0 && raw >= audioDurS - 0.1;
+        const sDuration = activeEntry.duration || audioDurS || 0;
+        const nearAudioEnd = sDuration > 0 && raw >= sDuration - 0.1;
+
+        const sLoopStart = activeEntry.loopStartS || loopStartS;
+        const sLoopEnd = activeEntry.loopEndS || loopEndS;
+        const sLoopDur = Math.max(0.01, sLoopEnd - sLoopStart);
 
         let remainingToEnd;
         let isFirst = false;
-        if (raw < loopStartS + 0.0001) {
-            remainingToEnd = loopEndS - raw;
+        if (raw < sLoopStart + 0.0001) {
+            remainingToEnd = sLoopEnd - raw;
             isFirst = true;
         } else {
-            const into = (raw - loopStartS) % loopDurS;
-            remainingToEnd = loopDurS - into;
+            const into = (raw - sLoopStart) % sLoopDur;
+            remainingToEnd = sLoopDur - into;
         }
         if (nearAudioEnd) remainingToEnd = 0.05;
         if (remainingToEnd < 0.002) remainingToEnd = 0.002;
@@ -593,9 +630,10 @@ const doDualSwitchMultiStyle = () => {
         const aeFirst = styleTracks[currentStyleIdx];
         const vFadeEnd2 = aeFirst.current.envelopeEndsAtCtx || (aeFirst.current.startedAtCtx + Math.max(fadeInS, fadeOutS));
         syncVocalOnJump(loopStartS, aeFirst.current.startedAtCtx, vFadeEnd2, Math.max(fadeInS, fadeOutS));
+        const curOffsetD = aeFirst.offsetDiff || 0;
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
-        transitionPos = loopStartS;
+        transitionPos = Math.max(0, loopStartS + curOffsetD);
     } catch (e) {
         DLog('doDualSwitchMultiStyle FATAL:', e.message, e.stack);
     }
@@ -1798,6 +1836,44 @@ const switchStyle = (styleIdx) => {
     currentTrack = ae.current;
     nextTrack = ae.next;
 
+    renderMarkers();
+
+    (async () => {
+        try {
+            let styleFilename, styleDirId, styleCfg;
+            if (styleIdx === -1) {
+                styleFilename = activeTrackCfg.filename;
+                styleDirId = activeTrackCfg.bgm_dir_id || '';
+                styleCfg = activeTrackCfg;
+            } else {
+                const style = activeTrackCfg.styles[styleIdx];
+                if (!style) return;
+                styleFilename = style.filename || activeTrackCfg.filename;
+                styleDirId = style.bgm_dir_id || activeTrackCfg.bgm_dir_id || '';
+                styleCfg = {
+                    ...activeTrackCfg,
+                    filename: styleFilename,
+                    bgm_dir_id: styleDirId,
+                    audio_zero_bar: style.audio_zero_bar != null ? style.audio_zero_bar : activeTrackCfg.audio_zero_bar,
+                    audio_zero_beat: style.audio_zero_beat != null ? style.audio_zero_beat : activeTrackCfg.audio_zero_beat,
+                    bpm: style.bpm || activeTrackCfg.bpm,
+                    beats_per_bar: style.beats_per_bar || activeTrackCfg.beats_per_bar,
+                    tempo_changes: style.tempo_changes || activeTrackCfg.tempo_changes || [],
+                    meter_changes: style.meter_changes || activeTrackCfg.meter_changes || [],
+                };
+            }
+            const newLyrics = await loadLyrics(styleCfg, false);
+            if (currentStyleIdx !== styleIdx) return;
+            lyricLines = newLyrics;
+            activeLyricIndex = -1;
+            lastDesktopLyricLineIdx = -1;
+            updateLyricDisplay();
+            DLog(`style ${styleIdx} lyrics loaded: ${newLyrics.length} lines`);
+        } catch(e) {
+            DLog('style switch lyrics load failed:', e.message);
+        }
+    })();
+
     startUiTicker();
 
     setTimeout(() => {
@@ -1930,17 +2006,25 @@ const updateUi = () => {
     rafId = requestAnimationFrame(updateUi);
     if (!currentTrack || !activeTrackCfg) return;
     const s = currentPlaySec();
-    const bb = barBeat(s);
+    let beatSec = s;
+    let uiTotalDur = Math.max(audioDurS || 1, loopEndS || 1);
+    if (multiStyleMode && currentStyleIdx >= 0) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry) {
+            if (entry.offsetDiff != null) beatSec = s - entry.offsetDiff;
+            uiTotalDur = Math.max(entry.duration || audioDurS || 1, entry.loopEndS || loopEndS || 1);
+        }
+    }
+    const bb = barBeat(beatSec);
     const formattedBeat = Number(bb.beat.toFixed(2));
     $('curBeat').textContent = `${bb.bar}:${formattedBeat}`;
     $('curMs').textContent = Math.floor(s * 1000).toString();
     $('curSec').textContent = s.toFixed(3);
 
-    const totalDur = Math.max(audioDurS || 1, loopEndS || 1);
-    const pct = Math.min(99.9, (s / totalDur) * 100);
+    const pct = Math.min(99.9, (s / uiTotalDur) * 100);
     $('progressFill').style.width = pct + '%';
     $('progressStart').textContent = fmtTime(0);
-    $('progressEnd').textContent = fmtTime(totalDur);
+    $('progressEnd').textContent = fmtTime(uiTotalDur);
 
     updateLyricDisplay();
     updateLyricScrollList();
@@ -1973,27 +2057,45 @@ setInterval(() => {
 }, 16);
 
 const renderMarkers = () => {
-    const totalDur = Math.max(audioDurS || 1, loopEndS || 1);
+    let totalDur = Math.max(audioDurS || 1, loopEndS || 1);
+    let mLoopStart = loopStartS;
+    let mLoopEnd = loopEndS;
+    let mFadeOutStart = fadeOutStartS;
+    let mJumpStart = jumpSegStartS;
+    let mJumpEnd = jumpSegEndS;
+    if (multiStyleMode && currentStyleIdx >= 0) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry) {
+            totalDur = Math.max(entry.duration || audioDurS || 1, entry.loopEndS || loopEndS || 1);
+            mLoopStart = entry.loopStartS || loopStartS;
+            mLoopEnd = entry.loopEndS || loopEndS;
+            if (entry.offsetDiff != null) {
+                mFadeOutStart = fadeOutStartS + entry.offsetDiff;
+                mJumpStart = jumpSegEnabled ? Math.max(0, jumpSegStartS + entry.offsetDiff) : 0;
+                mJumpEnd = jumpSegEnabled ? Math.max(0, jumpSegEndS + entry.offsetDiff) : 0;
+            }
+        }
+    }
     const clampPct = (p) => Math.max(0, Math.min(99.9, p));
-    const lpct = clampPct((loopStartS / totalDur) * 100);
-    const lepct = clampPct((loopEndS / totalDur) * 100);
+    const lpct = clampPct((mLoopStart / totalDur) * 100);
+    const lepct = clampPct((mLoopEnd / totalDur) * 100);
     if (lepct - lpct < 0.5) {
         $('markerLoopEnd').style.left = clampPct(lpct + 0.5) + '%';
     } else {
         $('markerLoopEnd').style.left = lepct + '%';
     }
     $('markerLoopStart').style.left = lpct + '%';
-    $('markerLoopStart').title = `循环起点 ${fmtTime(loopStartS)} (${activeTrackCfg.loop_start_bar}:${activeTrackCfg.loop_start_beat})`;
-    $('markerLoopEnd').title = `循环终点 ${fmtTime(loopEndS)} (${activeTrackCfg.loop_end_bar}:${activeTrackCfg.loop_end_beat})`;
+    $('markerLoopStart').title = `循环起点 ${fmtTime(mLoopStart)} (${activeTrackCfg.loop_start_bar}:${activeTrackCfg.loop_start_beat})`;
+    $('markerLoopEnd').title = `循环终点 ${fmtTime(mLoopEnd)} (${activeTrackCfg.loop_end_bar}:${activeTrackCfg.loop_end_beat})`;
 
     if ($('markerFadeOut')) {
         if (fadeOutS > 0.0002) {
-            const fospct = clampPct((fadeOutStartS / totalDur) * 100);
+            const fospct = clampPct((mFadeOutStart / totalDur) * 100);
             $('markerFadeOut').style.left = fospct + '%';
             $('markerFadeOut').style.display = 'block';
             const fosTitle = fadeOutAuto
-                ? `淡出起点 ${fmtTime(fadeOutStartS)} (自动：淡出结束对齐循环终点)`
-                : `淡出起点 ${fmtTime(fadeOutStartS)} (${activeTrackCfg.fade_out_start_bar}:${activeTrackCfg.fade_out_start_beat || 1})`;
+                ? `淡出起点 ${fmtTime(mFadeOutStart)} (自动：淡出结束对齐循环终点)`
+                : `淡出起点 ${fmtTime(mFadeOutStart)} (${activeTrackCfg.fade_out_start_bar}:${activeTrackCfg.fade_out_start_beat || 1})`;
             $('markerFadeOut').title = fosTitle;
         } else {
             $('markerFadeOut').style.display = 'none';
@@ -2001,20 +2103,20 @@ const renderMarkers = () => {
     }
     if ($('markerJumpSegStart')) {
         if (jumpSegEnabled) {
-            const jsspct = clampPct((jumpSegStartS / totalDur) * 100);
+            const jsspct = clampPct((mJumpStart / totalDur) * 100);
             $('markerJumpSegStart').style.left = jsspct + '%';
             $('markerJumpSegStart').style.display = 'block';
-            $('markerJumpSegStart').title = `跳转段起点 ${fmtTime(jumpSegStartS)} (${activeTrackCfg.jump_seg_start_bar}:${activeTrackCfg.jump_seg_start_beat})`;
+            $('markerJumpSegStart').title = `跳转段起点 ${fmtTime(mJumpStart)} (${activeTrackCfg.jump_seg_start_bar}:${activeTrackCfg.jump_seg_start_beat})`;
         } else {
             $('markerJumpSegStart').style.display = 'none';
         }
     }
     if ($('markerJumpSegEnd')) {
         if (jumpSegEnabled) {
-            const jsepct = clampPct((jumpSegEndS / totalDur) * 100);
+            const jsepct = clampPct((mJumpEnd / totalDur) * 100);
             $('markerJumpSegEnd').style.left = jsepct + '%';
             $('markerJumpSegEnd').style.display = 'block';
-            $('markerJumpSegEnd').title = `跳转段终点 ${fmtTime(jumpSegEndS)} (${activeTrackCfg.jump_seg_end_bar}:${activeTrackCfg.jump_seg_end_beat})`;
+            $('markerJumpSegEnd').title = `跳转段终点 ${fmtTime(mJumpEnd)} (${activeTrackCfg.jump_seg_end_bar}:${activeTrackCfg.jump_seg_end_beat})`;
         } else {
             $('markerJumpSegEnd').style.display = 'none';
         }
