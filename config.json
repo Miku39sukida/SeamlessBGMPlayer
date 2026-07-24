@@ -4,6 +4,21 @@
       "id": "default",
       "label": "默认目录",
       "path": "./BGM"
+    },
+    {
+      "id": "d_5fbf56ae",
+      "label": "临时目录",
+      "path": "C:\\Users\\wangy\\Documents\\Adobe\\Audition\\22.0\\HOYO-MiX - 苍原的颂灵歌 Anthem of the Savannah\\Conformed Files"
+    },
+    {
+      "id": "d_b81e1888",
+      "label": "临时目录2",
+      "path": "C:\\Users\\wangy\\Music"
+    },
+    {
+      "id": "d_1468cebc",
+      "label": "Telegram机器人下载",
+      "path": "C:\\Users\\wangy\\Downloads\\Telegram Desktop"
     }
   ],
   "tracks": [
@@ -30,7 +45,465 @@
       "jump_seg_end_bar": 0,
       "jump_seg_end_beat": 0,
       "font_face": "default",
-      "tempo_changes": []
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "39",
+      "category": "愛言葉プロジェクト",
+      "filename": "DECO 27 sasakure.UK 初音ミク - 39.flac",
+      "bgm_dir_id": "default",
+      "bpm": 175,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 2.6,
+      "loop_start_bar": 2,
+      "loop_start_beat": 4,
+      "loop_end_bar": 158,
+      "loop_end_beat": 2,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [
+        {
+          "bar": 3,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 5,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 6,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 8,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 9,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 11,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 12,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 14,
+          "beat": 1,
+          "beats_per_bar": 6
+        },
+        {
+          "bar": 15,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 21,
+          "beat": 1,
+          "beats_per_bar": 6
+        },
+        {
+          "bar": 22,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 28,
+          "beat": 1,
+          "beats_per_bar": 7
+        },
+        {
+          "bar": 29,
+          "beat": 1,
+          "beats_per_bar": 8
+        },
+        {
+          "bar": 33,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 47,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 49,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 50,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 56,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 57,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 61,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 67,
+          "beat": 1,
+          "beats_per_bar": 6
+        },
+        {
+          "bar": 68,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 74,
+          "beat": 1,
+          "beats_per_bar": 8
+        },
+        {
+          "bar": 75,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 91,
+          "beat": 1,
+          "beats_per_bar": 8
+        },
+        {
+          "bar": 95,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 102,
+          "beat": 1,
+          "beats_per_bar": 8
+        },
+        {
+          "bar": 103,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 131,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 133,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 134,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 140,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 141,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 147,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 148,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 154,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 155,
+          "beat": 1,
+          "beats_per_bar": 3
+        }
+      ],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "孤独-野 (月球战斗曲)",
+      "category": "挪德卡莱",
+      "filename": "孤独-野 - 赤羽曜 -  6.7 月球 战斗曲 453787090.flac",
+      "bgm_dir_id": "default",
+      "bpm": 125,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 1,
+      "loop_start_bar": 1,
+      "loop_start_beat": 1,
+      "loop_end_bar": 93,
+      "loop_end_beat": 1,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "バグ (かいりきベア)",
+      "category": "V曲/二次元",
+      "filename": "かいりきベア - バグ.flac",
+      "bgm_dir_id": "default",
+      "bpm": 186,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 1,
+      "loop_start_bar": 4,
+      "loop_start_beat": 1,
+      "loop_end_bar": 117,
+      "loop_end_beat": 1,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "single",
+      "jump_seg_start_bar": 52,
+      "jump_seg_start_beat": 1,
+      "jump_seg_end_bar": 54,
+      "jump_seg_end_beat": 1,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "苍原的颂灵歌 Anthem of the Savannah",
+      "category": "纳塔",
+      "filename": "HOYO-MiX - 苍原的颂灵歌 Anthem of the Savannah 44100 1.wav",
+      "bgm_dir_id": "default",
+      "bpm": 123,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 4.6,
+      "loop_start_bar": 1,
+      "loop_start_beat": 4.6,
+      "loop_end_bar": 128,
+      "loop_end_beat": 4.6,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "teyvat",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "洄映的漩流 Swirls of the Stream",
+      "category": "须弥",
+      "filename": "HOYO-MiX - 洄映的漩流 Swirls of the Stream.flac",
+      "bgm_dir_id": "default",
+      "bpm": 162,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 4.05,
+      "loop_start_bar": 73,
+      "loop_start_beat": 4,
+      "loop_end_bar": 161,
+      "loop_end_beat": 5,
+      "fade_in_beats": 1,
+      "fade_out_beats": 1,
+      "fade_out_start_bar": 161,
+      "fade_out_start_beat": 6.5,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [
+        {
+          "bar": 73,
+          "beat": 1,
+          "beats_per_bar": 5
+        },
+        {
+          "bar": 74,
+          "beat": 1,
+          "beats_per_bar": 6
+        },
+        {
+          "bar": 82,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 90,
+          "beat": 1,
+          "beats_per_bar": 2.5
+        },
+        {
+          "bar": 93,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 94,
+          "beat": 1,
+          "beats_per_bar": 2.5
+        },
+        {
+          "bar": 97,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 98,
+          "beat": 1,
+          "beats_per_bar": 2.5
+        },
+        {
+          "bar": 101,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 102,
+          "beat": 1,
+          "beats_per_bar": 2.5
+        },
+        {
+          "bar": 105,
+          "beat": 1,
+          "beats_per_bar": 4
+        },
+        {
+          "bar": 153,
+          "beat": 1,
+          "beats_per_bar": 5
+        },
+        {
+          "bar": 161,
+          "beat": 1,
+          "beats_per_bar": 6
+        }
+      ],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "冬の花",
+      "category": "ACG",
+      "filename": "宮本浩次 - 冬の花.mp3",
+      "bgm_dir_id": "d_b81e1888",
+      "bpm": 100.5,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 3,
+      "loop_start_bar": 1,
+      "loop_start_beat": 3,
+      "loop_end_bar": 95,
+      "loop_end_beat": 3,
+      "fade_in_beats": 0,
+      "fade_out_beats": 1,
+      "fade_out_start_bar": 95,
+      "fade_out_start_beat": 4,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
     },
     {
       "name": "アイドル",
@@ -58,20 +531,265 @@
       "tempo_changes": [
         {
           "bar": 87,
-          "beat": 3,
+          "beat": 3.5,
           "bpm": 150
         },
         {
           "bar": 104,
-          "beat": 1,
+          "beat": 1.5,
           "bpm": 158
         },
         {
           "bar": 113,
-          "beat": 2,
+          "beat": 3,
           "bpm": 166
         }
-      ]
+      ],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "Only My Railgun",
+      "category": "未分类",
+      "filename": "fripSide - only my railgun.flac",
+      "bgm_dir_id": "default",
+      "bpm": 143,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 3.46,
+      "loop_start_bar": 1,
+      "loop_start_beat": 3.46,
+      "loop_end_bar": 146,
+      "loop_end_beat": 3.46,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "LOSER",
+      "category": "ACG",
+      "filename": "米津玄師 - LOSER.mp3",
+      "bgm_dir_id": "d_b81e1888",
+      "bpm": 121,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 4.75,
+      "loop_start_bar": 8,
+      "loop_start_beat": 1,
+      "loop_end_bar": 117,
+      "loop_end_beat": 1,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "single",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "岩壑之崩 Rage Beneath the Mountains",
+      "category": "璃月",
+      "filename": "陈致逸,HOYO_MiX_Rage_Beneath_the_Mountains_岩壑之崩.flac",
+      "bgm_dir_id": "d_1468cebc",
+      "bpm": 136,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 4.5,
+      "loop_start_bar": 1,
+      "loop_start_beat": 4.5,
+      "loop_end_bar": 114,
+      "loop_end_beat": 2.5,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0.8,
+      "fade_out_start_bar": 116,
+      "fade_out_start_beat": 1,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "玫瑰的请柬",
+      "category": "MOMENTS（付费购买获得）",
+      "filename": "洛天依 - 玫瑰色请柬.flac",
+      "bgm_dir_id": "default",
+      "bpm": 125,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 3.35,
+      "loop_start_bar": 2,
+      "loop_start_beat": 1,
+      "loop_end_bar": 126,
+      "loop_end_beat": 1,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [
+        {
+          "bar": 37,
+          "beat": 1,
+          "bpm": 120
+        },
+        {
+          "bar": 55,
+          "beat": 1,
+          "bpm": 125
+        },
+        {
+          "bar": 81,
+          "beat": 1,
+          "bpm": 120
+        },
+        {
+          "bar": 125,
+          "beat": 1,
+          "bpm": 119
+        }
+      ],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "冰风组曲",
+      "category": "未分类",
+      "filename": "HOYO-MiX - 歌裴莉娅的晨歌 Aubade of Coppelia.flac",
+      "bgm_dir_id": "default",
+      "bpm": 200,
+      "beats_per_bar": 6,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 3.67,
+      "loop_start_bar": 4,
+      "loop_start_beat": 6,
+      "loop_end_bar": 74,
+      "loop_end_beat": 6,
+      "fade_in_beats": 0,
+      "fade_out_beats": 1,
+      "fade_out_start_bar": 75,
+      "fade_out_start_beat": 1.8,
+      "loop_mode": "dual",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [
+        {
+          "bar": 60,
+          "beat": 1,
+          "beats_per_bar": 3
+        },
+        {
+          "bar": 61,
+          "beat": 1,
+          "beats_per_bar": 6
+        }
+      ],
+      "multi_style_enabled": true,
+      "styles": [
+        {
+          "audio_zero_beat": 3.67,
+          "bgm_dir_id": "default",
+          "filename": "HOYO-MiX - 科培琉司的辞行 Envoi of Coppelius.flac",
+          "name": "BOSS大招"
+        }
+      ],
+      "vocal_enabled": false,
+      "vocal_filename": "",
+      "vocal_dir_id": "",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
+    },
+    {
+      "name": "少女花海2",
+      "category": "未分类",
+      "filename": "少女花海2 乐器轨.wav",
+      "bgm_dir_id": "default",
+      "bpm": 82,
+      "beats_per_bar": 4,
+      "audio_zero_bar": 1,
+      "audio_zero_beat": 1,
+      "loop_start_bar": 1,
+      "loop_start_beat": 1,
+      "loop_end_bar": 46,
+      "loop_end_beat": 1,
+      "fade_in_beats": 0,
+      "fade_out_beats": 0,
+      "fade_out_start_bar": 0,
+      "fade_out_start_beat": 0,
+      "loop_mode": "single",
+      "jump_seg_start_bar": 0,
+      "jump_seg_start_beat": 0,
+      "jump_seg_end_bar": 0,
+      "jump_seg_end_beat": 0,
+      "font_face": "default",
+      "tempo_changes": [],
+      "meter_changes": [],
+      "multi_style_enabled": false,
+      "styles": [],
+      "vocal_enabled": true,
+      "vocal_filename": "少女花海2 人声轨.wav",
+      "vocal_dir_id": "default",
+      "vocal_audio_zero_bar": 1,
+      "vocal_audio_zero_beat": 1
     }
   ]
 }
