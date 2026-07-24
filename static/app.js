@@ -1338,6 +1338,46 @@ const playTrack = async (idx) => {
         DLog('playTrack: loading audio (background)...');
         await loadAudio(cfg);
         DLog('playTrack: audio loaded, audioBuffer=' + !!audioBuffer);
+
+        const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
+        const vocalEnabledPre = !!(cfg.vocal_enabled && cfg.vocal_filename);
+        const styleBuffers = {};
+        let vocalBufferPre = null;
+
+        const extraLoadPromises = [];
+        if (multiStyleModePre) {
+            cfg.styles.forEach((style, sIdx) => {
+                if (!style.filename) return;
+                extraLoadPromises.push((async () => {
+                    try {
+                        const sfilename = style.filename || cfg.filename;
+                        const sdirId = style.bgm_dir_id || cfg.bgm_dir_id || '';
+                        const buf = await loadBuffer(sfilename, sdirId);
+                        styleBuffers[sIdx] = buf;
+                        DLog(`preload style ${sIdx} (${style.name}) done`);
+                    } catch(e) {
+                        DLog(`preload style ${sIdx} failed: ${e.message}`);
+                    }
+                })());
+            });
+        }
+        if (vocalEnabledPre) {
+            extraLoadPromises.push((async () => {
+                try {
+                    const vfilename = cfg.vocal_filename;
+                    const vdirId = cfg.vocal_dir_id || cfg.bgm_dir_id || '';
+                    vocalBufferPre = await loadBuffer(vfilename, vdirId);
+                    DLog('preload vocal track done');
+                } catch(e) {
+                    DLog('preload vocal track failed:', e.message);
+                }
+            })());
+        }
+        if (extraLoadPromises.length > 0) {
+            DLog(`playTrack: preloading ${extraLoadPromises.length} extra audio(s)...`);
+            await Promise.all(extraLoadPromises);
+            DLog('playTrack: all extra audios preloaded');
+        }
         
         // 竞态条件检查：如果用户已经点击了其他歌曲，放弃当前加载
         if (loadingTrackIdx !== idx) {
@@ -1411,6 +1451,53 @@ const playTrack = async (idx) => {
         }
         
         DLog(`playTrack: after loadAudio, startS=${startS.toFixed(4)}, loopStartS=${loopStartS.toFixed(4)}, loopEndS=${loopEndS.toFixed(4)}`);
+
+        vocalEnabled = !!(cfg.vocal_enabled && cfg.vocal_filename && vocalBufferPre);
+        vocalBuffer = null;
+        vocalTrack = null;
+        vocalGain = null;
+        vocalMode = 'original';
+
+        const startVocalTrack = (startAt, baseOffset) => {
+            if (!vocalEnabled || !vocalBufferPre) return;
+            vocalBuffer = vocalBufferPre;
+            vocalGain = audioCtx.createGain();
+            vocalGain.gain.value = 1.0;
+            vocalGain.connect(masterGain);
+            vocalTrack = createTrack('vocal');
+            const vAzb = cfg.vocal_audio_zero_bar != null ? cfg.vocal_audio_zero_bar : cfg.audio_zero_bar || 1;
+            const vAzbt = cfg.vocal_audio_zero_beat != null ? cfg.vocal_audio_zero_beat : cfg.audio_zero_beat || 1;
+            const timePerBeat = 60.0 / cfg.bpm;
+            const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
+            const vZeroOffset = ((vAzb - 1) * (cfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
+            const offsetDiff = defZeroOffset - vZeroOffset;
+            const vocalStartOffset = Math.max(0, baseOffset + offsetDiff);
+            const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
+            const ok = playSegmentAt(vocalTrack, vocalStartOffset, startAt, {
+                enableLoop: false,
+                initialGain,
+                buffer: vocalBuffer,
+                connectTo: vocalGain,
+            });
+            if (ok) {
+                vocalTrack.offsetDiff = offsetDiff;
+                if (fadeInS > 0.0002 && vocalTrack.gain) {
+                    try {
+                        const g0 = Math.max(audioCtx.currentTime + 0.001, startAt);
+                        vocalTrack.gain.gain.cancelScheduledValues(g0);
+                        vocalTrack.gain.gain.setValueAtTime(0.0, g0);
+                        vocalTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                    } catch(e) { DLog('vocal initial fade-in err', e.message); }
+                }
+                DLog(`vocal track started: offset=${vocalStartOffset.toFixed(3)}s diff=${offsetDiff.toFixed(3)}s`);
+            } else {
+                vocalEnabled = false;
+                vocalTrack = null;
+                vocalBuffer = null;
+                try { if (vocalGain) vocalGain.disconnect(); } catch(_){}
+                vocalGain = null;
+            }
+        };
 
         multiStyleMode = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         styleTracks = {};
@@ -1503,23 +1590,21 @@ const playTrack = async (idx) => {
             currentTrack = defEntry.current;
             nextTrack = defEntry.next;
 
-            cfg.styles.forEach(async (style, sIdx) => {
+            cfg.styles.forEach((style, sIdx) => {
                 if (!style.filename) return;
-                try {
-                    const buf = await loadAudio(cfg, sIdx);
-                    if (!buf || !styleTracks || !multiStyleMode) return;
-                    const entry = startStyleTrack(sIdx, buf, false);
-                    if (entry) {
-                        styleTracks[sIdx] = entry;
-                        DLog(`parallel style ${sIdx} (${style.name}) started`);
-                    }
-                } catch(e) {
-                    DLog(`parallel style ${sIdx} failed: ${e.message}`);
+                const buf = styleBuffers[sIdx];
+                if (!buf) return;
+                const entry = startStyleTrack(sIdx, buf, false);
+                if (entry) {
+                    styleTracks[sIdx] = entry;
+                    DLog(`style ${sIdx} (${style.name}) started`);
                 }
             });
 
+            startVocalTrack(now, startS);
+
             scheduleNextLoop();
-            DLog(`playTrack: multiStyleMode active, ${cfg.styles.length} shadow tracks loading`);
+            DLog(`playTrack: multiStyleMode active, ${Object.keys(styleTracks).length} style tracks ready`);
         } else {
             currentTrack = createTrack('A');
             nextTrack = createTrack('B');
@@ -1554,6 +1639,8 @@ const playTrack = async (idx) => {
                 } catch(e) { DLog('initial fade-in err', e.message); }
             }
 
+            startVocalTrack(now, startS);
+
             scheduleNextLoop();
         }
 
@@ -1568,47 +1655,7 @@ const playTrack = async (idx) => {
 
         updateStyleButtons();
 
-        vocalEnabled = !!(cfg.vocal_enabled && cfg.vocal_filename);
-        vocalBuffer = null;
-        vocalTrack = null;
-        vocalGain = null;
-        vocalMode = 'original';
         updateVocalButton();
-        if (vocalEnabled) {
-            (async () => {
-                try {
-                    const vfilename = cfg.vocal_filename;
-                    const vdirId = cfg.vocal_dir_id || cfg.bgm_dir_id || '';
-                    const buf = await loadBuffer(vfilename, vdirId);
-                    if (!buf || !vocalEnabled) return;
-                    vocalBuffer = buf;
-                    vocalGain = audioCtx.createGain();
-                    vocalGain.gain.value = 1.0;
-                    vocalGain.connect(masterGain);
-                    vocalTrack = createTrack('vocal');
-                    const vAzb = cfg.vocal_audio_zero_bar != null ? cfg.vocal_audio_zero_bar : cfg.audio_zero_bar || 1;
-                    const vAzbt = cfg.vocal_audio_zero_beat != null ? cfg.vocal_audio_zero_beat : cfg.audio_zero_beat || 1;
-                    const timePerBeat = 60.0 / cfg.bpm;
-                    const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
-                    const vZeroOffset = ((vAzb - 1) * (cfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
-                    const offsetDiff = defZeroOffset - vZeroOffset;
-                    const curPlay = currentPlaySec();
-                    const vocalStartOffset = Math.max(0, curPlay + offsetDiff);
-                    const startAt = audioCtx.currentTime + 0.05;
-                    playSegmentAt(vocalTrack, vocalStartOffset, startAt, {
-                        enableLoop: false,
-                        initialGain: 1.0,
-                        buffer: vocalBuffer,
-                        connectTo: vocalGain,
-                    });
-                    vocalTrack.offsetDiff = offsetDiff;
-                    updateVocalButton();
-                    DLog(`vocal track started: offset=${vocalStartOffset.toFixed(3)}s diff=${offsetDiff.toFixed(3)}s`);
-                } catch(e) {
-                    DLog('vocal track load failed:', e.message);
-                }
-            })();
-        }
 
         DLog('playTrack: COMPLETE');
     } catch (e) {
