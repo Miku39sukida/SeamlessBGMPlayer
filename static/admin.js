@@ -596,24 +596,36 @@ function renderTrackCard(t, index) {
     if (i <= 0) return;
     [state.tracks[i - 1], state.tracks[i]] = [state.tracks[i], state.tracks[i - 1]];
     markDirty();
-    renderAllTracks();
+    const cardEl = getCardByTrackId(t._id);
+    const prevCard = cardEl.previousElementSibling;
+    if (cardEl && prevCard && prevCard.classList.contains('track-card')) {
+      prevCard.insertAdjacentElement('beforebegin', cardEl);
+      updateCardIndex(cardEl, i - 1);
+      updateCardIndex(prevCard, i);
+    }
   });
   card.querySelector('[data-act="down"]').addEventListener('click', () => {
     const i = state.tracks.indexOf(t);
     if (i < 0 || i >= state.tracks.length - 1) return;
     [state.tracks[i + 1], state.tracks[i]] = [state.tracks[i], state.tracks[i + 1]];
     markDirty();
-    renderAllTracks();
+    const cardEl = getCardByTrackId(t._id);
+    const nextCard = cardEl.nextElementSibling;
+    if (cardEl && nextCard && nextCard.classList.contains('track-card')) {
+      nextCard.insertAdjacentElement('afterend', cardEl);
+      updateCardIndex(cardEl, i + 1);
+      updateCardIndex(nextCard, i);
+    }
   });
   card.querySelector('[data-act="insert-above"]').addEventListener('click', () => {
     const i = state.tracks.indexOf(t);
     const newTrack = { ...defaultTrack(), _expanded: true };
     state.tracks.splice(i, 0, newTrack);
     markDirty();
-    renderAllTracks();
+    insertCardDOM(newTrack, i);
     requestAnimationFrame(() => {
-      const container = $('#tracksContainer');
-      if (container) container.scrollTo({ top: 0, behavior: 'smooth' });
+      const newCardEl = getCardByTrackId(newTrack._id);
+      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   });
   card.querySelector('[data-act="insert-below"]').addEventListener('click', () => {
@@ -621,10 +633,10 @@ function renderTrackCard(t, index) {
     const newTrack = { ...defaultTrack(), _expanded: true };
     state.tracks.splice(i + 1, 0, newTrack);
     markDirty();
-    renderAllTracks();
+    insertCardDOM(newTrack, i + 1);
     requestAnimationFrame(() => {
-      const newCard = document.querySelector(`.track-card[data-track-id="${newTrack._id}"]`);
-      if (newCard) newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const newCardEl = getCardByTrackId(newTrack._id);
+      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   });
   card.querySelector('[data-act="duplicate"]').addEventListener('click', () => {
@@ -632,13 +644,19 @@ function renderTrackCard(t, index) {
     const copy = { ...defaultTrack(), ...JSON.parse(JSON.stringify(t)), _id: randId(), name: (t.name || '新曲目') + ' (副本)', _expanded: true };
     state.tracks.splice(i + 1, 0, copy);
     markDirty();
-    renderAllTracks();
+    insertCardDOM(copy, i + 1);
   });
   card.querySelector('[data-act="delete"]').addEventListener('click', () => {
     if (!confirm(`确定删除曲目 "${t.name}" 吗？`)) return;
+    const i = state.tracks.indexOf(t);
     state.tracks = state.tracks.filter(x => x._id !== t._id);
     markDirty();
-    renderAllTracks();
+    const cardEl = getCardByTrackId(t._id);
+    if (cardEl) {
+      cardEl.remove();
+      updateIndicesFrom(i);
+    }
+    refreshTrackCount();
   });
 
   const renderTempoChanges = () => {
@@ -1091,6 +1109,38 @@ function renderAllTracks() {
   $('#trackCount').textContent = state.tracks.length;
 }
 
+/* ===== 局部 DOM 更新辅助（避免全量重渲染） ===== */
+function getCardByTrackId(id) {
+  return document.querySelector(`.track-card[data-track-id="${id}"]`);
+}
+function updateCardIndex(card, idx) {
+  const idxEl = $('.tc-idx', card);
+  if (idxEl) idxEl.textContent = String(idx + 1);
+}
+function updateIndicesFrom(startIdx) {
+  const cards = $$('.track-card');
+  for (let i = Math.max(0, startIdx); i < cards.length; i++) {
+    updateCardIndex(cards[i], i);
+  }
+}
+function refreshTrackCount() {
+  $('#trackCount').textContent = state.tracks.length;
+}
+function insertCardDOM(track, idx) {
+  const newCard = renderTrackCard(track, idx);
+  if (state.dirty) newCard.classList.add('dirty');
+  const container = $('#tracksContainer');
+  const cards = $$('.track-card', container);
+  if (idx >= cards.length) {
+    container.appendChild(newCard);
+  } else {
+    cards[idx].insertAdjacentElement('beforebegin', newCard);
+  }
+  updateIndicesFrom(idx);
+  refreshTrackCount();
+  return newCard;
+}
+
 function markDirty(card) {
   state.dirty = true;
   if (card) card.classList.add('dirty');
@@ -1187,7 +1237,7 @@ async function init() {
     nt._expanded = true;
     state.tracks.push(nt);
     markDirty();
-    renderAllTracks();
+    insertCardDOM(nt, state.tracks.length - 1);
     const c = $('#tracksContainer');
     if (c) {
       requestAnimationFrame(() => {
