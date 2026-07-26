@@ -69,6 +69,11 @@ let endingGain = null;
 let endingTrack = null;
 let endingPlaying = false;
 
+let introEnabled = false;
+let introBuffer = null;
+let introTrack = null;
+let introPlaying = false;
+
 let fullLoopEnabled = false;
 let isFullLoopMode = false;
 let fullLoopSwitching = false;
@@ -1540,6 +1545,22 @@ const playTrack = async (idx) => {
             })());
         }
 
+        // 前奏音频
+        const introEnabledPre = !!(cfg.intro_enabled && cfg.intro_filename);
+        let introBufferPre = null;
+        if (introEnabledPre) {
+            allLoadPromises.push((async () => {
+                try {
+                    const ifn = cfg.intro_filename;
+                    const idir = cfg.intro_dir_id || cfg.bgm_dir_id || '';
+                    introBufferPre = await loadBuffer(ifn, idir);
+                    DLog('preload intro audio done');
+                } catch(e) {
+                    DLog('preload intro audio failed: ' + e.message);
+                }
+            })());
+        }
+
         if (allLoadPromises.length > 0) {
             DLog(`playTrack: preloading ${allLoadPromises.length} audio(s) concurrently...`);
             await Promise.all(allLoadPromises);
@@ -1730,144 +1751,188 @@ const playTrack = async (idx) => {
         styleTracks = {};
         currentStyleIdx = -1;
 
-        if (multiStyleMode) {
-            const ctxCurrentTime = audioCtx.currentTime;
-            const now = ctxCurrentTime + 0.05;
-            const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
-            const timePerBeat = 60.0 / cfg.bpm;
-            const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
+        introEnabled = introEnabledPre && !!introBufferPre;
+        introBuffer = introBufferPre;
+        introTrack = null;
+        introPlaying = false;
 
-            const getStyleOffsetDiff = (sIdx) => {
-                if (sIdx < 0) return 0;
-                const style = cfg.styles[sIdx];
-                const sAzb = style.audio_zero_bar != null ? style.audio_zero_bar : cfg.audio_zero_bar || 1;
-                const sAzbt = style.audio_zero_beat != null ? style.audio_zero_beat : cfg.audio_zero_beat || 1;
-                const sZeroOffset = ((sAzb - 1) * (cfg.beats_per_bar || 4) + (sAzbt - 1)) * timePerBeat;
-                return defZeroOffset - sZeroOffset;
-            };
+        const startMainAudio = (startAt = null) => {
+            if (multiStyleMode) {
+                const ctxCurrentTime = audioCtx.currentTime;
+                const now = startAt !== null ? startAt : (ctxCurrentTime + 0.05);
+                const initialGain = (startAt !== null) ? 1.0 : ((fadeInS > 0.0002) ? 0.0 : 1.0);
+                const timePerBeat = 60.0 / cfg.bpm;
+                const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
 
-            const startStyleTrack = (sIdx, buffer, isDefault) => {
-                if (!buffer) return null;
-                const offsetDiff = getStyleOffsetDiff(sIdx);
-                const sLoopStart = Math.max(0, loopStartS + offsetDiff);
-                const sLoopEnd = Math.max(sLoopStart + 0.01, loopEndS + offsetDiff);
+                const getStyleOffsetDiff = (sIdx) => {
+                    if (sIdx < 0) return 0;
+                    const style = cfg.styles[sIdx];
+                    const sAzb = style.audio_zero_bar != null ? style.audio_zero_bar : cfg.audio_zero_bar || 1;
+                    const sAzbt = style.audio_zero_beat != null ? style.audio_zero_beat : cfg.audio_zero_beat || 1;
+                    const sZeroOffset = ((sAzb - 1) * (cfg.beats_per_bar || 4) + (sAzbt - 1)) * timePerBeat;
+                    return defZeroOffset - sZeroOffset;
+                };
 
-                const styleGain = audioCtx.createGain();
-                styleGain.gain.value = isDefault ? 1.0 : 0.0;
-                styleGain.connect(masterGain);
+                const startStyleTrack = (sIdx, buffer, isDefault) => {
+                    if (!buffer) return null;
+                    const offsetDiff = getStyleOffsetDiff(sIdx);
+                    const sLoopStart = Math.max(0, loopStartS + offsetDiff);
+                    const sLoopEnd = Math.max(sLoopStart + 0.01, loopEndS + offsetDiff);
 
-                const trackA = createTrack(sIdx === -1 ? 'default-A' : `style-${sIdx}-A`);
-                const trackB = createTrack(sIdx === -1 ? 'default-B' : `style-${sIdx}-B`);
+                    const styleGain = audioCtx.createGain();
+                    styleGain.gain.value = isDefault ? 1.0 : 0.0;
+                    styleGain.connect(masterGain);
 
-                const idealStartOffset = startS + offsetDiff;
-                let startOffset, trackStartTime;
-                if (idealStartOffset >= 0) {
-                    startOffset = idealStartOffset;
-                    trackStartTime = now;
-                } else {
-                    startOffset = 0;
-                    trackStartTime = now - idealStartOffset;
+                    const trackA = createTrack(sIdx === -1 ? 'default-A' : `style-${sIdx}-A`);
+                    const trackB = createTrack(sIdx === -1 ? 'default-B' : `style-${sIdx}-B`);
+
+                    const idealStartOffset = startS + offsetDiff;
+                    let startOffset, trackStartTime;
+                    if (idealStartOffset >= 0) {
+                        startOffset = idealStartOffset;
+                        trackStartTime = now;
+                    } else {
+                        startOffset = 0;
+                        trackStartTime = now - idealStartOffset;
+                    }
+
+                    const ok = playSegmentAt(trackA, startOffset, trackStartTime, {
+                        enableLoop: false,
+                        initialGain: isDefault ? initialGain : 1.0,
+                        buffer: buffer,
+                        connectTo: styleGain,
+                    });
+                    if (!ok) {
+                        DLog(`startStyleTrack(${sIdx}): playSegmentAt failed`);
+                        try { styleGain.disconnect(); } catch(_){}
+                        return null;
+                    }
+
+                    DLog(`startStyleTrack(${sIdx}): offset=${startOffset.toFixed(3)}s offsetDiff=${offsetDiff.toFixed(3)}s loop=[${sLoopStart.toFixed(3)}→${sLoopEnd.toFixed(3)}]`);
+
+                    if (isDefault && startAt === null && fadeInS > 0.0002 && trackA.gain) {
+                        try {
+                            const g0 = Math.max(audioCtx.currentTime + 0.001, trackStartTime);
+                            trackA.gain.gain.cancelScheduledValues(g0);
+                            trackA.gain.gain.setValueAtTime(0.0, g0);
+                            trackA.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                        } catch(e) { DLog('initial fade-in err', e.message); }
+                    }
+
+                    return {
+                        styleGain,
+                        current: trackA,
+                        next: trackB,
+                        buffer,
+                        offsetDiff,
+                        loopStartS: sLoopStart,
+                        loopEndS: sLoopEnd,
+                        duration: buffer.duration,
+                        sameLyrics: isDefault ? false : (cfg.styles[sIdx] && cfg.styles[sIdx].same_lyrics) || false,
+                    };
+                };
+
+                const defEntry = startStyleTrack(-1, audioBuffer, true);
+                if (!defEntry) {
+                    DLog('playTrack: FATAL - default style track start failed!');
+                    return;
                 }
+                styleTracks[-1] = defEntry;
+                currentTrack = defEntry.current;
+                nextTrack = defEntry.next;
 
-                const ok = playSegmentAt(trackA, startOffset, trackStartTime, {
-                    enableLoop: false,
-                    initialGain: isDefault ? initialGain : 1.0,
-                    buffer: buffer,
-                    connectTo: styleGain,
+                cfg.styles.forEach((style, sIdx) => {
+                    if (!style.filename) return;
+                    const buf = styleBuffers[sIdx];
+                    if (!buf) return;
+                    const entry = startStyleTrack(sIdx, buf, false);
+                    if (entry) {
+                        styleTracks[sIdx] = entry;
+                        DLog(`style ${sIdx} (${style.name}) started`);
+                    }
                 });
-                if (!ok) {
-                    DLog(`startStyleTrack(${sIdx}): playSegmentAt failed`);
-                    try { styleGain.disconnect(); } catch(_){}
-                    return null;
+
+                startVocalTrack(now, startS);
+                startExtraTracks(now, startS);
+
+                DLog(`playTrack: multiStyleMode active, ${Object.keys(styleTracks).length} style tracks ready`);
+            } else {
+                currentTrack = createTrack('A');
+                nextTrack = createTrack('B');
+
+                const ctxCurrentTime = audioCtx.currentTime;
+                const now = startAt !== null ? startAt : (ctxCurrentTime + 0.05);
+                const initialGain = (startAt !== null) ? 1.0 : ((fadeInS > 0.0002) ? 0.0 : 1.0);
+                
+                DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
+                DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
+                
+                const playSuccess = playSegmentAt(currentTrack, startS, now, {
+                    enableLoop: false,
+                    initialGain,
+                });
+                
+                if (!playSuccess) {
+                    DLog('playTrack: playSegmentAt returned false!');
+                    return;
+                } else {
+                    DLog('playTrack: playSegmentAt SUCCESS');
                 }
 
-                DLog(`startStyleTrack(${sIdx}): offset=${startOffset.toFixed(3)}s offsetDiff=${offsetDiff.toFixed(3)}s loop=[${sLoopStart.toFixed(3)}→${sLoopEnd.toFixed(3)}]`);
-
-                if (isDefault && fadeInS > 0.0002 && trackA.gain) {
+                if (startAt === null && fadeInS > 0.0002 && currentTrack.gain) {
                     try {
-                        const g0 = Math.max(audioCtx.currentTime + 0.001, trackStartTime);
-                        trackA.gain.gain.cancelScheduledValues(g0);
-                        trackA.gain.gain.setValueAtTime(0.0, g0);
-                        trackA.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                        const g0 = Math.max(audioCtx.currentTime + 0.001, now);
+                        currentTrack.gain.gain.cancelScheduledValues(g0);
+                        currentTrack.gain.gain.setValueAtTime(0.0, g0);
+                        currentTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                        currentTrack.envelopeEndsAtCtx = Math.max(currentTrack.envelopeEndsAtCtx || 0, g0 + fadeInS);
+                        DLog(`initial fade-in: ${(fadeInS*1000).toFixed(0)}ms`);
                     } catch(e) { DLog('initial fade-in err', e.message); }
                 }
 
-                return {
-                    styleGain,
-                    current: trackA,
-                    next: trackB,
-                    buffer,
-                    offsetDiff,
-                    loopStartS: sLoopStart,
-                    loopEndS: sLoopEnd,
-                    duration: buffer.duration,
-                    sameLyrics: isDefault ? false : (cfg.styles[sIdx] && cfg.styles[sIdx].same_lyrics) || false,
-                };
+                startVocalTrack(now, startS);
+                startExtraTracks(now, startS);
+            }
+
+            const runPostAudioTasks = () => {
+                scheduleNextLoop();
+                updateExtraTracksPanel();
+                updateVocalButton();
+                updateStyleButtons();
             };
 
-            const defEntry = startStyleTrack(-1, audioBuffer, true);
-            if (!defEntry) {
-                DLog('playTrack: FATAL - default style track start failed!');
-                return;
-            }
-            styleTracks[-1] = defEntry;
-            currentTrack = defEntry.current;
-            nextTrack = defEntry.next;
-
-            cfg.styles.forEach((style, sIdx) => {
-                if (!style.filename) return;
-                const buf = styleBuffers[sIdx];
-                if (!buf) return;
-                const entry = startStyleTrack(sIdx, buf, false);
-                if (entry) {
-                    styleTracks[sIdx] = entry;
-                    DLog(`style ${sIdx} (${style.name}) started`);
-                }
-            });
-
-            startVocalTrack(now, startS);
-            startExtraTracks(now, startS);
-
-            scheduleNextLoop();
-            DLog(`playTrack: multiStyleMode active, ${Object.keys(styleTracks).length} style tracks ready`);
-        } else {
-            currentTrack = createTrack('A');
-            nextTrack = createTrack('B');
-
-            const ctxCurrentTime = audioCtx.currentTime;
-            const now = ctxCurrentTime + 0.05;
-            const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
-            
-            DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
-            DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
-            
-            const playSuccess = playSegmentAt(currentTrack, startS, now, {
-                enableLoop: false,
-                initialGain,
-            });
-            
-            if (!playSuccess) {
-                DLog('playTrack: playSegmentAt returned false!');
-                return;
+            if (startAt !== null) {
+                const delayMs = Math.max(0, (startAt - audioCtx.currentTime) * 1000);
+                DLog(`postponing post-audio tasks for ${delayMs.toFixed(1)}ms`);
+                setTimeout(runPostAudioTasks, delayMs);
             } else {
-                DLog('playTrack: playSegmentAt SUCCESS');
+                runPostAudioTasks();
             }
+        };
 
-            if (fadeInS > 0.0002 && currentTrack.gain) {
-                try {
-                    const g0 = Math.max(audioCtx.currentTime + 0.001, now);
-                    currentTrack.gain.gain.cancelScheduledValues(g0);
-                    currentTrack.gain.gain.setValueAtTime(0.0, g0);
-                    currentTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
-                    currentTrack.envelopeEndsAtCtx = Math.max(currentTrack.envelopeEndsAtCtx || 0, g0 + fadeInS);
-                    DLog(`initial fade-in: ${(fadeInS*1000).toFixed(0)}ms`);
-                } catch(e) { DLog('initial fade-in err', e.message); }
+        if (introEnabled && introBuffer) {
+            introPlaying = true;
+            introTrack = createTrack('intro');
+            const introStartTime = audioCtx.currentTime + 0.05;
+            const ok = playSegmentAt(introTrack, 0, introStartTime, {
+                enableLoop: false,
+                initialGain: 1.0,
+                buffer: introBuffer,
+                connectTo: masterGain,
+            });
+            if (ok) {
+                DLog(`intro track started: dur=${introBuffer.duration.toFixed(3)}s`);
+                const introEndTime = introStartTime + introBuffer.duration;
+                DLog(`intro will end at: ${introEndTime.toFixed(4)}s`);
+                startMainAudio(introEndTime);
+            } else {
+                introEnabled = false;
+                introTrack = null;
+                introPlaying = false;
+                startMainAudio();
             }
-
-            startVocalTrack(now, startS);
-            startExtraTracks(now, startS);
-
-            scheduleNextLoop();
+        } else {
+            startMainAudio();
         }
 
         // 收尾音频初始化（不立即播放）
@@ -1909,11 +1974,6 @@ const playTrack = async (idx) => {
                 fullLoopBtn.style.display = 'none';
             }
         }
-
-        updateStyleButtons();
-
-        updateVocalButton();
-        updateExtraTracksPanel();
 
         DLog('playTrack: COMPLETE');
     } catch (e) {
@@ -2809,6 +2869,17 @@ const stopAll = async () => {
     endingBuffer = null;
     endingEnabled = false;
     endingPlaying = false;
+
+    if (introTrack) {
+        try {
+            if (introTrack.source) { try { introTrack.source.stop(); } catch(_){} try { introTrack.source.disconnect(); } catch(_){} }
+            if (introTrack.gain) { try { introTrack.gain.disconnect(); } catch(_){} }
+        } catch(_) {}
+        introTrack = null;
+    }
+    introBuffer = null;
+    introEnabled = false;
+    introPlaying = false;
 
     isFullLoopMode = false;
     fullLoopSwitching = false;

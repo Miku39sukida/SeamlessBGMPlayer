@@ -59,6 +59,9 @@ function defaultTrack() {
     loop_sfx_filename: '',
     loop_sfx_dir_id: '',
     loop_sfx_fade_in_beats: 4,
+    intro_enabled: false,
+    intro_filename: '',
+    intro_dir_id: '',
   };
 }
 
@@ -557,6 +560,25 @@ function renderTrackCard(t, index) {
         <button class="btn btn-small btn-primary" data-act="add-extra-track" style="margin-top:8px;">＋ 添加轨道</button>
         <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
           提示：可添加多轨音频（如伴奏轨、人声轨、合唱轨等），播放器默认全开，可独立调节每轨音量
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">🎵 前奏音频（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="intro_enabled"> 启用前奏音频
+      </label>
+      <div class="intro-panel" data-k="intro_panel" style="display:none; margin-top:12px;">
+        <div class="field">
+          <label>前奏音频文件</label>
+          <div class="file-picker">
+            <input type="search" class="intro-file-search" placeholder="🔍 过滤文件…">
+            <select class="intro-file-select" size="5"></select>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：前奏放完后无缝切换到主音频循环播放，无淡入淡出
         </div>
       </div>
     </div>
@@ -1399,6 +1421,79 @@ function renderTrackCard(t, index) {
   dirSelect.addEventListener('change', () => {
     renderEndingFileOptions();
   });
+
+  // --- 前奏音频 ---
+  const introEnabledCheck = card.querySelector('input[data-k="intro_enabled"]');
+  const introPanel = card.querySelector('[data-k="intro_panel"]');
+  if (introEnabledCheck) {
+    introEnabledCheck.checked = !!t.intro_enabled;
+    introPanel.style.display = t.intro_enabled ? '' : 'none';
+    introEnabledCheck.addEventListener('change', () => {
+      t.intro_enabled = introEnabledCheck.checked;
+      introPanel.style.display = t.intro_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+
+  const introFileSearch = card.querySelector('.intro-file-search');
+  const introFileSelect = card.querySelector('.intro-file-select');
+
+  const renderIntroFileOptions = (searchQuery = '') => {
+    const curDirId = t.bgm_dir_id || 'default';
+    const curFn = t.intro_filename || '';
+    let filesInDir = state.bgmList.filter(e => e.dir_id === curDirId);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filesInDir = filesInDir.filter(e => (e.filename || '').toLowerCase().includes(q));
+    }
+    let html = '';
+    html += `<option value="">— 未选择前奏音频 —</option>`;
+    filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+      const sel = e.filename === curFn ? 'selected' : '';
+      html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+    });
+    if (filesInDir.length === 0) {
+      html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+    }
+    introFileSelect.innerHTML = html;
+    if (curFn) {
+      const need = encodeURIComponent(curDirId) + '::' + encodeURIComponent(curFn);
+      if (introFileSelect.value !== need) {
+        if (Array.from(introFileSelect.options).some(o => o.value === need)) {
+          introFileSelect.value = need;
+        } else {
+          const fake = document.createElement('option');
+          fake.value = need;
+          fake.selected = true;
+          fake.textContent = `⚠️ 当前：${curFn}`;
+          introFileSelect.insertBefore(fake, introFileSelect.firstChild.nextSibling);
+        }
+      }
+    }
+  };
+  if (introFileSelect) {
+    renderIntroFileOptions();
+
+    introFileSearch.addEventListener('input', () => {
+      renderIntroFileOptions(introFileSearch.value);
+    });
+    introFileSelect.addEventListener('change', () => {
+      const v = introFileSelect.value;
+      if (!v) {
+        t.intro_filename = '';
+        t.intro_dir_id = t.bgm_dir_id || 'default';
+      } else {
+        const [encDir, encFn] = v.split('::');
+        t.intro_dir_id = decodeURIComponent(encDir);
+        t.intro_filename = decodeURIComponent(encFn);
+      }
+      markDirty(card);
+    });
+
+    dirSelect.addEventListener('change', () => {
+      renderIntroFileOptions();
+    });
+  }
 
   // --- 完整循环 ---
   const fullLoopEnabledCheck = card.querySelector('input[data-k="full_loop_enabled"]');
