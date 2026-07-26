@@ -2570,11 +2570,53 @@ const toggleFullLoop = () => {
     }, totalWaitMs);
 };
 
+const STOP_FADE_DURATION = 2.0;
+
 const stopAll = async () => {
     clearTimeout(loopSchedulerTimer);
     loopSchedulerTimer = null;
     cancelAnimationFrame(rafId);
     rafId = null;
+
+    const now = audioCtx.currentTime;
+    const fadeEnd = now + STOP_FADE_DURATION;
+    const fadeTargets = [];
+
+    const addFadeTarget = (gainNode) => {
+        if (!gainNode) return;
+        try {
+            gainNode.gain.cancelScheduledValues(now);
+            gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+            gainNode.gain.linearRampToValueAtTime(0.0, fadeEnd);
+            fadeTargets.push(gainNode);
+        } catch(_) {}
+    };
+
+    if (multiStyleMode) {
+        for (const sIdx in styleTracks) {
+            const entry = styleTracks[sIdx];
+            if (!entry) continue;
+            for (const tk of [entry.current, entry.next]) {
+                if (tk && tk.gain) addFadeTarget(tk.gain);
+            }
+            if (entry.styleGain) addFadeTarget(entry.styleGain);
+        }
+    }
+
+    if (currentTrack && currentTrack.gain) addFadeTarget(currentTrack.gain);
+    if (nextTrack && nextTrack.gain) addFadeTarget(nextTrack.gain);
+
+    extraTracks.forEach(et => {
+        if (et.track && et.track.gain) addFadeTarget(et.track.gain);
+        if (et.gain) addFadeTarget(et.gain);
+    });
+
+    if (endingTrack && endingTrack.gain) addFadeTarget(endingTrack.gain);
+    if (endingGain) addFadeTarget(endingGain);
+    if (introTrack && introTrack.gain) addFadeTarget(introTrack.gain);
+    if (masterGain) addFadeTarget(masterGain);
+
+    await new Promise(resolve => setTimeout(resolve, STOP_FADE_DURATION * 1000));
 
     if (multiStyleMode) {
         for (const sIdx in styleTracks) {
