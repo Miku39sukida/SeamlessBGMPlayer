@@ -53,13 +53,6 @@ let styleTracks = {};
 let styleSwitching = false;
 let multiStyleMode = false;
 
-let vocalMode = 'original';
-let vocalTrack = null;
-let vocalBuffer = null;
-let vocalGain = null;
-let vocalEnabled = false;
-let vocalSwitching = false;
-
 let extraTracks = [];
 let extraTracksEnabled = false;
 
@@ -353,7 +346,8 @@ const scheduleNextLoop = () => {
         if (raw < sLoopStart + 0.0001) {
             distToEnd = sLoopEnd - raw;
         } else {
-            const into = (raw - sLoopStart) % sLoopDur;
+            let into = (raw - sLoopStart) % sLoopDur;
+            if (into < 0) into += sLoopDur;
             distToEnd = sLoopDur - into;
         }
     }
@@ -431,49 +425,6 @@ const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfade
     });
 };
 
-const syncVocalOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => {
-    syncExtraTracksOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
-    if (!vocalEnabled || !vocalTrack || !vocalBuffer || !vocalGain) return;
-    if (!activeTrackCfg) return;
-    const vAzb = activeTrackCfg.vocal_audio_zero_bar != null ? activeTrackCfg.vocal_audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
-    const vAzbt = activeTrackCfg.vocal_audio_zero_beat != null ? activeTrackCfg.vocal_audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
-    const timePerBeat = 60.0 / activeTrackCfg.bpm;
-    const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
-    const vZeroOffset = ((vAzb - 1) * (activeTrackCfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
-    const offsetDiff = defZeroOffset - vZeroOffset;
-    const vocalTarget = Math.max(0, targetOffset + offsetDiff);
-
-    const newVocalTrack = createTrack('vocal-next');
-    const ok = playSegmentAt(newVocalTrack, vocalTarget, fadeStartAtCtx, {
-        enableLoop: false,
-        initialGain: 0.0,
-        buffer: vocalBuffer,
-        connectTo: vocalGain,
-    });
-    if (!ok) return;
-
-    try {
-        newVocalTrack.gain.gain.cancelScheduledValues(fadeStartAtCtx);
-        newVocalTrack.gain.gain.setValueAtTime(0.0, fadeStartAtCtx);
-        newVocalTrack.gain.gain.linearRampToValueAtTime(1.0, fadeEndAtCtx);
-    } catch(e) {}
-
-    if (vocalTrack && vocalTrack.gain) {
-        try {
-            vocalTrack.gain.gain.cancelScheduledValues(fadeStartAtCtx);
-            vocalTrack.gain.gain.setValueAtTime(vocalTrack.gain.gain.value, fadeStartAtCtx);
-            vocalTrack.gain.gain.linearRampToValueAtTime(0.0, fadeEndAtCtx);
-        } catch(e) {}
-        vocalTrack.stopScheduled = true;
-        vocalTrack.stopAtCtx = fadeEndAtCtx + 0.0005;
-        try { if (vocalTrack.source) vocalTrack.source.stop(vocalTrack.stopAtCtx); } catch(_) {}
-        safeCleanupTrack(vocalTrack);
-    }
-    newVocalTrack.offsetDiff = offsetDiff;
-    vocalTrack = newVocalTrack;
-    DLog(`vocal synced on jump: target=${vocalTarget.toFixed(3)}s xfade=${(xfadeS*1000).toFixed(0)}ms`);
-};
-
 const MIN_XFADE_S = 0.002;
 
 const doSingleJumpMultiStyle = () => {
@@ -509,7 +460,8 @@ const doSingleJumpMultiStyle = () => {
                 remainingToEnd = sLoopEnd - raw;
                 isFirst = true;
             } else {
-                const into = (raw - sLoopStart) % sLoopDur;
+                let into = (raw - sLoopStart) % sLoopDur;
+                if (into < 0) into += sLoopDur;
                 remainingToEnd = sLoopDur - into;
             }
             if (remainingToEnd < 0.002) remainingToEnd = 0.002;
@@ -577,7 +529,7 @@ const doSingleJumpMultiStyle = () => {
         loopPhase = nextPhase;
 
         DLog(`MULTI SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)} (${Object.keys(styleTracks).length} styles swapped)`);
-        syncVocalOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
+
         const curOffsetDiff = activeEntry.offsetDiff || 0;
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
@@ -611,7 +563,8 @@ const doDualSwitchMultiStyle = () => {
             remainingToEnd = sLoopEnd - raw;
             isFirst = true;
         } else {
-            const into = (raw - sLoopStart) % sLoopDur;
+            let into = (raw - sLoopStart) % sLoopDur;
+            if (into < 0) into += sLoopDur;
             remainingToEnd = sLoopDur - into;
         }
         if (nearAudioEnd) remainingToEnd = 0.05;
@@ -695,7 +648,7 @@ const doDualSwitchMultiStyle = () => {
         DLog(`MULTI DUAL SWITCH${isFirst ? ' [FIRST]' : ''}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s → ${bb.bar}:${bb.beat} (${Object.keys(styleTracks).length} styles swapped)`);
         const aeFirst = styleTracks[currentStyleIdx];
         const vFadeEnd2 = aeFirst.current.envelopeEndsAtCtx || (aeFirst.current.startedAtCtx + Math.max(fadeInS, fadeOutS));
-        syncVocalOnJump(loopStartS, aeFirst.current.startedAtCtx, vFadeEnd2, Math.max(fadeInS, fadeOutS));
+
         const curOffsetD = aeFirst.offsetDiff || 0;
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
@@ -741,7 +694,8 @@ const doSingleJump = () => {
                 isFirst = true;
                 DLog(`  main-phase FIRST: raw=${raw.toFixed(3)} < loopStart=${loopStartS.toFixed(3)}; rem to loopEnd=${loopEndS.toFixed(3)} = ${remainingToEnd.toFixed(4)}`);
             } else {
-                const into = (raw - loopStartS) % loopDurS;
+                let into = (raw - loopStartS) % loopDurS;
+                if (into < 0) into += loopDurS;
                 remainingToEnd = loopDurS - into;
                 DLog(`  main-phase LOOP: raw=${raw.toFixed(3)} into loop=${into.toFixed(3)} rem=${remainingToEnd.toFixed(4)} loopDur=${loopDurS.toFixed(3)}`);
             }
@@ -820,7 +774,7 @@ const doSingleJump = () => {
         loopPhase = nextPhase;
         DLog(`SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''} phase ${prevPhase}→${nextPhase}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s switchAt=${switchAtCtx.toFixed(4)} xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)}`);
         safeCleanupTrack(prevTrack);
-        syncVocalOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
+
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
         transitionPos = targetOffset;
@@ -856,7 +810,8 @@ const doDualSwitch = () => {
             remainingToEnd = loopEndS - raw;
             isFirst = true;
         } else {
-            const into = (raw - loopStartS) % loopDurS;
+            let into = (raw - loopStartS) % loopDurS;
+            if (into < 0) into += loopDurS;
             remainingToEnd = loopDurS - into;
         }
         if (nearAudioEnd) remainingToEnd = 0.05;
@@ -948,7 +903,7 @@ const doDualSwitch = () => {
         DLog(`  prev[${prevTrack.label}] will NOT hard-stop; cleanup after ctx=${cleanupAfterCtx.toFixed(3)} (naturalEnd=${naturalEndCtx.toFixed(3)})`);
         safeCleanupTrack(prevTrack);
         const vFadeEnd = newTrack.envelopeEndsAtCtx || (newTrack.startedAtCtx + Math.max(fadeInS, fadeOutS));
-        syncVocalOnJump(loopStartS, newTrack.startedAtCtx, vFadeEnd, Math.max(fadeInS, fadeOutS));
+
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
         transitionPos = loopStartS;
@@ -1448,13 +1403,11 @@ const playTrack = async (idx) => {
         DLog('playTrack: loading all audios concurrently...');
 
         const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
-        const vocalEnabledPre = !!(cfg.vocal_enabled && cfg.vocal_filename);
         const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
         const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
         const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
         const styleBuffers = {};
         let mainBuffer = null;
-        let vocalBufferPre = null;
         let extraTrackBuffers = [];
         let endingBufferPre = null;
         let loopSfxBufferPre = null;
@@ -1487,19 +1440,6 @@ const playTrack = async (idx) => {
                     }
                 })());
             });
-        }
-        // 人声轨
-        if (vocalEnabledPre) {
-            allLoadPromises.push((async () => {
-                try {
-                    const vfilename = cfg.vocal_filename;
-                    const vdirId = cfg.vocal_dir_id || cfg.bgm_dir_id || '';
-                    vocalBufferPre = await loadBuffer(vfilename, vdirId);
-                    DLog('preload vocal track done');
-                } catch(e) {
-                    DLog('preload vocal track failed:', e.message);
-                }
-            })());
         }
         // 额外轨道
         if (extraTracksEnabledPre) {
@@ -1645,53 +1585,6 @@ const playTrack = async (idx) => {
         }
         
         DLog(`playTrack: after loadAudio, startS=${startS.toFixed(4)}, loopStartS=${loopStartS.toFixed(4)}, loopEndS=${loopEndS.toFixed(4)}`);
-
-        vocalEnabled = !!(cfg.vocal_enabled && cfg.vocal_filename && vocalBufferPre);
-        vocalBuffer = null;
-        vocalTrack = null;
-        vocalGain = null;
-        vocalMode = 'original';
-
-        const startVocalTrack = (startAt, baseOffset) => {
-            if (!vocalEnabled || !vocalBufferPre) return;
-            vocalBuffer = vocalBufferPre;
-            vocalGain = audioCtx.createGain();
-            vocalGain.gain.value = 1.0;
-            vocalGain.connect(masterGain);
-            vocalTrack = createTrack('vocal');
-            const vAzb = cfg.vocal_audio_zero_bar != null ? cfg.vocal_audio_zero_bar : cfg.audio_zero_bar || 1;
-            const vAzbt = cfg.vocal_audio_zero_beat != null ? cfg.vocal_audio_zero_beat : cfg.audio_zero_beat || 1;
-            const timePerBeat = 60.0 / cfg.bpm;
-            const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
-            const vZeroOffset = ((vAzb - 1) * (cfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
-            const offsetDiff = defZeroOffset - vZeroOffset;
-            const vocalStartOffset = Math.max(0, baseOffset + offsetDiff);
-            const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
-            const ok = playSegmentAt(vocalTrack, vocalStartOffset, startAt, {
-                enableLoop: false,
-                initialGain,
-                buffer: vocalBuffer,
-                connectTo: vocalGain,
-            });
-            if (ok) {
-                vocalTrack.offsetDiff = offsetDiff;
-                if (fadeInS > 0.0002 && vocalTrack.gain) {
-                    try {
-                        const g0 = Math.max(audioCtx.currentTime + 0.001, startAt);
-                        vocalTrack.gain.gain.cancelScheduledValues(g0);
-                        vocalTrack.gain.gain.setValueAtTime(0.0, g0);
-                        vocalTrack.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
-                    } catch(e) { DLog('vocal initial fade-in err', e.message); }
-                }
-                DLog(`vocal track started: offset=${vocalStartOffset.toFixed(3)}s diff=${offsetDiff.toFixed(3)}s`);
-            } else {
-                vocalEnabled = false;
-                vocalTrack = null;
-                vocalBuffer = null;
-                try { if (vocalGain) vocalGain.disconnect(); } catch(_){}
-                vocalGain = null;
-            }
-        };
 
         const startExtraTracks = (startAt, baseOffset) => {
             extraTracks = [];
@@ -1852,7 +1745,6 @@ const playTrack = async (idx) => {
                     }
                 });
 
-                startVocalTrack(now, startS);
                 startExtraTracks(now, startS);
 
                 DLog(`playTrack: multiStyleMode active, ${Object.keys(styleTracks).length} style tracks ready`);
@@ -1890,7 +1782,6 @@ const playTrack = async (idx) => {
                     } catch(e) { DLog('initial fade-in err', e.message); }
                 }
 
-                startVocalTrack(now, startS);
                 startExtraTracks(now, startS);
             }
 
@@ -2026,17 +1917,23 @@ let loopBroken = false;
 
 const VOCAL_FADE_DURATION = 3.0;
 
+const getVocalTrack = () => {
+    return extraTracks.find(et => et.name && et.name.includes('人声'));
+};
+
 const updateVocalButton = () => {
     const btn = $('vocalToggleBtn');
     const container = $('vocalToggleContainer');
     if (!btn || !container) return;
-    if (!vocalEnabled || !vocalTrack) {
+    const vocalTrack = getVocalTrack();
+    if (!vocalTrack || !vocalTrack.gain) {
         container.style.display = 'none';
         return;
     }
     container.style.display = '';
-    btn.disabled = vocalSwitching;
-    if (vocalMode === 'original') {
+    btn.disabled = vocalTrack.switching;
+    const isOriginal = vocalTrack.muted !== true;
+    if (isOriginal) {
         btn.textContent = '🎤 原唱模式';
         btn.classList.add('active');
     } else {
@@ -2046,22 +1943,23 @@ const updateVocalButton = () => {
 };
 
 const toggleVocalMode = () => {
-    if (!vocalEnabled || !vocalTrack || !vocalGain || vocalSwitching) return;
-    const newMode = vocalMode === 'original' ? 'accompaniment' : 'original';
+    const vocalTrack = getVocalTrack();
+    if (!vocalTrack || !vocalTrack.gain || vocalTrack.switching) return;
     const now = audioCtx.currentTime + 0.02;
     const fadeEnd = now + VOCAL_FADE_DURATION;
-    const targetGain = newMode === 'original' ? 1.0 : 0.0;
+    const isOriginal = vocalTrack.muted !== true;
+    const targetGain = isOriginal ? 0 : (vocalTrack.volume || 1.0);
     try {
-        vocalGain.gain.cancelScheduledValues(now);
-        vocalGain.gain.setValueAtTime(vocalGain.gain.value, now);
-        vocalGain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
+        vocalTrack.gain.gain.cancelScheduledValues(now);
+        vocalTrack.gain.gain.setValueAtTime(vocalTrack.gain.gain.value, now);
+        vocalTrack.gain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
     } catch(e) { DLog('toggleVocalMode fade err', e.message); }
-    vocalSwitching = true;
-    vocalMode = newMode;
+    vocalTrack.switching = true;
+    vocalTrack.muted = isOriginal;
     updateVocalButton();
-    DLog(`vocal mode: ${vocalMode} (${VOCAL_FADE_DURATION}s fade)`);
+    DLog(`vocal mode: ${isOriginal ? 'accompaniment' : 'original'} (${VOCAL_FADE_DURATION}s fade)`);
     setTimeout(() => {
-        vocalSwitching = false;
+        vocalTrack.switching = false;
         updateVocalButton();
         DLog('vocal mode switch: COMPLETE');
     }, VOCAL_FADE_DURATION * 1000);
@@ -2306,12 +2204,6 @@ const playEnding = () => {
         fadeOutTrack(nextTrack);
     }
 
-    // 人声轨淡出
-    if (vocalTrack) {
-        try { if (vocalTrack.source) vocalTrack.source.loop = false; } catch(_) {}
-        fadeOutTrack(vocalTrack);
-    }
-
     // 额外轨道淡出
     extraTracks.forEach(et => {
         if (et.track) {
@@ -2370,13 +2262,6 @@ const playEnding = () => {
             currentTrack = null;
             nextTrack = null;
         }
-        if (vocalTrack) {
-            try { if (vocalTrack.source) vocalTrack.source.stop(); } catch(_){}
-            try { if (vocalTrack.source) vocalTrack.source.disconnect(); } catch(_){}
-            try { if (vocalTrack.gain) vocalTrack.gain.disconnect(); } catch(_){}
-            vocalTrack = null;
-        }
-        if (vocalGain) { try { vocalGain.disconnect(); } catch(_){} vocalGain = null; }
         extraTracks.forEach(et => {
             if (et.track) {
                 try { if (et.track.source) et.track.source.stop(); } catch(_){}
@@ -2598,46 +2483,7 @@ const toggleFullLoop = () => {
         fadeOutTrack(nextTrack);
     }
 
-    // 2. 人声轨同步切换
-    let newVocalTrack = null;
-    if (vocalEnabled && vocalBuffer && vocalGain) {
-        const timePerBeat = 60.0 / activeTrackCfg.bpm;
-        const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
-        const vAzb = (activeTrackCfg.vocal_audio_zero_bar != null) ? activeTrackCfg.vocal_audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
-        const vAzbt = (activeTrackCfg.vocal_audio_zero_beat != null) ? activeTrackCfg.vocal_audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
-        const vZeroOffset = ((vAzb - 1) * (activeTrackCfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
-        const vOffsetDiff = defZeroOffset - vZeroOffset;
-
-        let vStartOffset;
-        if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
-            const vCurRaw = vocalTrack ? getRawPlaybackPos(vocalTrack) : (targetStartOffset + vOffsetDiff);
-            vStartOffset = Math.max(0, vCurRaw);
-        } else {
-            vStartOffset = Math.max(0, fadeInStartOffset + vOffsetDiff);
-        }
-
-        const vTargetGain = vocalMode === 'original' ? 1.0 : 0.0;
-
-        newVocalTrack = createTrack('seg-vocal');
-        const vok = playSegmentAt(newVocalTrack, vStartOffset, fadeInStartAt, {
-            enableLoop: true,
-            initialGain: needFade ? 0.0 : vTargetGain,
-            buffer: vocalBuffer,
-            connectTo: vocalGain,
-            loopStart: Math.max(0, targetLoopStart + vOffsetDiff),
-            loopEnd: Math.max(0.01, targetLoopEnd + vOffsetDiff),
-        });
-        if (vok && needFade) {
-            try {
-                newVocalTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
-                newVocalTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
-                newVocalTrack.gain.gain.linearRampToValueAtTime(vTargetGain, fadeEndAt);
-            } catch(_) {}
-        }
-        if (vocalTrack) fadeOutTrack(vocalTrack);
-    }
-
-    // 3. 额外轨道同步切换
+    // 2. 额外轨道同步切换
     const newExtraTracks = [];
     if (extraTracksEnabled && extraTracks.length > 0) {
         const timePerBeat = 60.0 / activeTrackCfg.bpm;
@@ -2736,14 +2582,6 @@ const toggleFullLoop = () => {
             nextTrack = newNextTrack;
         }
 
-        // 清理旧人声轨
-        if (vocalTrack) {
-            try { if (vocalTrack.source) vocalTrack.source.stop(); } catch(_){}
-            try { if (vocalTrack.source) vocalTrack.source.disconnect(); } catch(_){}
-            try { if (vocalTrack.gain) vocalTrack.gain.disconnect(); } catch(_){}
-        }
-        if (newVocalTrack) vocalTrack = newVocalTrack;
-
         // 清理旧额外轨道并替换
         if (newExtraTracks.length > 0) {
             extraTracks.forEach((et, i) => {
@@ -2833,18 +2671,6 @@ const stopAll = async () => {
     audioBuffer = null;
     loopBroken = false;
     multiStyleMode = false;
-
-    if (vocalTrack) {
-        try {
-            if (vocalTrack.source) { try { vocalTrack.source.stop(); } catch(_){} try { vocalTrack.source.disconnect(); } catch(_){} }
-            if (vocalTrack.gain) { try { vocalTrack.gain.disconnect(); } catch(_){} }
-        } catch(_) {}
-        vocalTrack = null;
-    }
-    if (vocalGain) { try { vocalGain.disconnect(); } catch(_){} vocalGain = null; }
-    vocalBuffer = null;
-    vocalEnabled = false;
-    vocalMode = 'original';
 
     extraTracks.forEach(et => {
         if (et.track) {

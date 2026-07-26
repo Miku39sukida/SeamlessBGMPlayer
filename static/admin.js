@@ -42,11 +42,6 @@ function defaultTrack() {
     meter_changes: [],
     multi_style_enabled: false,
     styles: [],
-    vocal_enabled: false,
-    vocal_filename: '',
-    vocal_dir_id: '',
-    vocal_audio_zero_bar: 1,
-    vocal_audio_zero_beat: 1,
     extra_tracks_enabled: false,
     extra_tracks: [],
     ending_enabled: false,
@@ -917,99 +912,6 @@ function renderTrackCard(t, index) {
       markDirty(card);
     });
     stylesPanel.style.display = t.multi_style_enabled ? '' : 'none';
-  }
-
-  const vocalEnabledCheck = card.querySelector('input[data-k="vocal_enabled"]');
-  const vocalPanel = card.querySelector('[data-k="vocal_panel"]');
-  const vocalFileSelect = card.querySelector('select.vocal-file-select');
-  if (vocalEnabledCheck) {
-    vocalEnabledCheck.checked = !!t.vocal_enabled;
-    vocalEnabledCheck.addEventListener('change', () => {
-      t.vocal_enabled = vocalEnabledCheck.checked;
-      vocalPanel.style.display = t.vocal_enabled ? '' : 'none';
-      markDirty(card);
-    });
-    vocalPanel.style.display = t.vocal_enabled ? '' : 'none';
-
-    if (vocalFileSelect) {
-      const vocalSearch = card.querySelector('input.vocal-file-search');
-      const vocalSearchKey = 'vocal_' + t._id;
-      if (vocalSearch) {
-        vocalSearch.value = state.perCardSearch.get(vocalSearchKey) || '';
-        vocalSearch.addEventListener('input', () => {
-          state.perCardSearch.set(vocalSearchKey, vocalSearch.value);
-          renderVocalOptions();
-        });
-      }
-
-      const renderVocalOptions = () => {
-        const dirId = t.bgm_dir_id || 'default';
-        const searchStr = (state.perCardSearch.get(vocalSearchKey) || '').trim().toLowerCase();
-        const filesInDir = state.bgmList.filter(f => f.dir_id === dirId);
-        const filtered = filesInDir.filter(f => {
-          if (!searchStr) return true;
-          return (f.filename || '').toLowerCase().includes(searchStr);
-        });
-        const curFn = t.vocal_filename || '';
-        const curDir = t.vocal_dir_id || dirId;
-
-        let html = '';
-        html += `<option value="">— 未选择人声轨 —</option>`;
-        filtered.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(f => {
-          const v = encodeURIComponent(f.dir_id) + '::' + encodeURIComponent(f.filename);
-          const selected = (curFn && curFn === f.filename && curDir === f.dir_id) ? 'selected' : '';
-          html += `<option value="${v}" ${selected}>${escapeHtml(f.filename)}</option>`;
-        });
-
-        const totalInDir = filesInDir.length;
-        const shown = filtered.length;
-        if (totalInDir === 0) {
-          html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
-        } else {
-          html += `<option disabled>— 共 ${shown}/${totalInDir} 个${searchStr ? `（搜索：${escapeHtml(searchStr)}）` : ''} —</option>`;
-        }
-        vocalFileSelect.innerHTML = html;
-
-        if (curFn) {
-          const need = encodeURIComponent(curDir) + '::' + encodeURIComponent(curFn);
-          if (vocalFileSelect.value !== need) {
-            if (Array.from(vocalFileSelect.options).some(o => o.value === need)) {
-              vocalFileSelect.value = need;
-            } else {
-              const fake = document.createElement('option');
-              fake.value = need;
-              fake.selected = true;
-              fake.textContent = `⚠️ 当前：${curFn}（不在搜索结果中）`;
-              vocalFileSelect.insertBefore(fake, vocalFileSelect.firstChild.nextSibling);
-            }
-          }
-        }
-      };
-      vocalFileSelect._render = renderVocalOptions;
-      renderVocalOptions();
-
-      vocalFileSelect.addEventListener('change', () => {
-        const v = vocalFileSelect.value;
-        if (!v) { t.vocal_filename = ''; t.vocal_dir_id = ''; }
-        else {
-          const [encDir, encFn] = v.split('::');
-          t.vocal_dir_id = decodeURIComponent(encDir);
-          t.vocal_filename = decodeURIComponent(encFn);
-        }
-        markDirty(card);
-      });
-    }
-
-    const vAzb = card.querySelector('input[data-k="vocal_audio_zero_bar"]');
-    const vAzbt = card.querySelector('input[data-k="vocal_audio_zero_beat"]');
-    if (vAzb) {
-      vAzb.value = t.vocal_audio_zero_bar != null ? t.vocal_audio_zero_bar : 1;
-      vAzb.addEventListener('input', () => { t.vocal_audio_zero_bar = Number(vAzb.value) || 1; markDirty(card); });
-    }
-    if (vAzbt) {
-      vAzbt.value = t.vocal_audio_zero_beat != null ? t.vocal_audio_zero_beat : 1;
-      vAzbt.addEventListener('input', () => { t.vocal_audio_zero_beat = Number(vAzbt.value) || 1; markDirty(card); });
-    }
   }
 
   const renderStyles = () => {
