@@ -65,7 +65,10 @@ DEFAULT_CONFIG = {
             "loop_sfx_enabled": False,
             "loop_sfx_filename": "",
             "loop_sfx_dir_id": "",
-            "loop_sfx_fade_in_beats": 4
+            "loop_sfx_fade_in_beats": 4,
+            "intro_enabled": False,
+            "intro_filename": "",
+            "intro_dir_id": ""
         }
     ]
 }
