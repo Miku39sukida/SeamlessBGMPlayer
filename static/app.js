@@ -1440,24 +1440,37 @@ const playTrack = async (idx) => {
         const loadedLyricLines = await loadLyrics(cfg, false);
         DLog('playTrack: lyrics loaded');
         
-        DLog('playTrack: loading audio (background)...');
-        await loadAudio(cfg);
-        DLog('playTrack: audio loaded, audioBuffer=' + !!audioBuffer);
+        DLog('playTrack: loading all audios concurrently...');
 
         const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         const vocalEnabledPre = !!(cfg.vocal_enabled && cfg.vocal_filename);
         const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
         const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
+        const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
         const styleBuffers = {};
+        let mainBuffer = null;
         let vocalBufferPre = null;
         let extraTrackBuffers = [];
         let endingBufferPre = null;
+        let loopSfxBufferPre = null;
 
-        const extraLoadPromises = [];
+        const allLoadPromises = [];
+
+        // 主音频
+        allLoadPromises.push((async () => {
+            try {
+                mainBuffer = await loadBuffer(cfg.filename, cfg.bgm_dir_id || '');
+                DLog('preload main track done');
+            } catch(e) {
+                DLog('preload main track failed:', e.message);
+            }
+        })());
+
+        // 多风格
         if (multiStyleModePre) {
             cfg.styles.forEach((style, sIdx) => {
                 if (!style.filename) return;
-                extraLoadPromises.push((async () => {
+                allLoadPromises.push((async () => {
                     try {
                         const sfilename = style.filename || cfg.filename;
                         const sdirId = style.bgm_dir_id || cfg.bgm_dir_id || '';
@@ -1470,8 +1483,9 @@ const playTrack = async (idx) => {
                 })());
             });
         }
+        // 人声轨
         if (vocalEnabledPre) {
-            extraLoadPromises.push((async () => {
+            allLoadPromises.push((async () => {
                 try {
                     const vfilename = cfg.vocal_filename;
                     const vdirId = cfg.vocal_dir_id || cfg.bgm_dir_id || '';
@@ -1482,10 +1496,11 @@ const playTrack = async (idx) => {
                 }
             })());
         }
+        // 额外轨道
         if (extraTracksEnabledPre) {
             cfg.extra_tracks.forEach((et, etIdx) => {
                 if (!et.filename) return;
-                extraLoadPromises.push((async () => {
+                allLoadPromises.push((async () => {
                     try {
                         const etfn = et.filename;
                         const etdir = et.dir_id || cfg.bgm_dir_id || '';
@@ -1498,8 +1513,9 @@ const playTrack = async (idx) => {
                 })());
             });
         }
+        // 收尾音频
         if (endingEnabledPre) {
-            extraLoadPromises.push((async () => {
+            allLoadPromises.push((async () => {
                 try {
                     const efn = cfg.ending_filename;
                     const edir = cfg.ending_dir_id || cfg.bgm_dir_id || '';
@@ -1510,10 +1526,9 @@ const playTrack = async (idx) => {
                 }
             })());
         }
-        const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
-        let loopSfxBufferPre = null;
+        // 循环提示音效
         if (loopSfxEnabledPre) {
-            extraLoadPromises.push((async () => {
+            allLoadPromises.push((async () => {
                 try {
                     const lfn = cfg.loop_sfx_filename;
                     const ldir = cfg.loop_sfx_dir_id || cfg.bgm_dir_id || '';
@@ -1524,10 +1539,17 @@ const playTrack = async (idx) => {
                 }
             })());
         }
-        if (extraLoadPromises.length > 0) {
-            DLog(`playTrack: preloading ${extraLoadPromises.length} extra audio(s)...`);
-            await Promise.all(extraLoadPromises);
-            DLog('playTrack: all extra audios preloaded');
+
+        if (allLoadPromises.length > 0) {
+            DLog(`playTrack: preloading ${allLoadPromises.length} audio(s) concurrently...`);
+            await Promise.all(allLoadPromises);
+            DLog('playTrack: all audios preloaded');
+        }
+
+        // 设置主音频全局变量
+        if (mainBuffer) {
+            audioBuffer = mainBuffer;
+            audioDurS = audioBuffer.duration;
         }
         
         // 竞态条件检查：如果用户已经点击了其他歌曲，放弃当前加载
@@ -1985,7 +2007,7 @@ const toggleVocalMode = () => {
     }, VOCAL_FADE_DURATION * 1000);
 };
 
-const EXTRA_TRACK_FADE_DURATION = 1.0;
+const EXTRA_TRACK_FADE_DURATION = 3.0;
 
 const updateExtraTracksPanel = () => {
     const container = $('extraTracksContainer');
