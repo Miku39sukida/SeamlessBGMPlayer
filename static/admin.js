@@ -57,6 +57,7 @@ function defaultTrack() {
     intro_enabled: false,
     intro_filename: '',
     intro_dir_id: '',
+    gain: 1.0,
   };
 }
 
@@ -422,12 +423,18 @@ function renderTrackCard(t, index) {
         <input type="number" step="1" min="1" data-k="beats_per_bar">
       </div>
       <div class="field">
+        <label>音频增益 <span class="hint">(默认1.0；小于1降音量，大于1提音量)</span></label>
+        <input type="number" step="0.01" min="0" max="3" data-k="gain">
+      </div>
+      <div class="field">
         <label>循环模式</label>
         <select data-k="loop_mode">
           <option value="single">单轨循环（无缝交叉）</option>
           <option value="dual">双轨循环（旧轨放完 + 独立淡入淡出）</option>
         </select>
       </div>
+    </div>
+    <div class="grid-4">
       <div class="field">
         <label>所属 BGM 目录</label>
         <select data-k="bgm_dir_id" class="dir-select">

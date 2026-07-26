@@ -6,6 +6,7 @@ const DLog = (...a) => { if (window.DEBUG_AUDIO) console.log('[AUDIO]', ...a); }
 
 let audioCtx = null;
 let masterGain = null;
+let configGainNode = null;
 let audioBuffer = null;
 let audioCache = {};
 let audioLoading = {};
@@ -115,6 +116,9 @@ const ensureCtx = () => {
         masterGain = audioCtx.createGain();
         masterGain.gain.value = 1.0;
         masterGain.connect(audioCtx.destination);
+        configGainNode = audioCtx.createGain();
+        configGainNode.gain.value = 1.0;
+        configGainNode.connect(masterGain);
         DLog('ensureCtx: created new AudioContext');
     }
     if (audioCtx.state === 'suspended') {
@@ -222,7 +226,7 @@ const playSegmentAt = (track, startOffsetSec, startAtCtx, opts = {}) => {
         DLog('playSegmentAt: buffer is null!');
         return false;
     }
-    const connectTo = opts.connectTo || masterGain;
+    const connectTo = opts.connectTo || configGainNode || masterGain;
     if (track.source) {
         try { track.source.onended = null; } catch(_){}
         try { if (!track.stopScheduled) { try { track.source.stop(); } catch(_){} } } catch(_){}
@@ -530,6 +534,8 @@ const doSingleJumpMultiStyle = () => {
 
         DLog(`MULTI SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)} (${Object.keys(styleTracks).length} styles swapped)`);
 
+        syncExtraTracksOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
+
         const curOffsetDiff = activeEntry.offsetDiff || 0;
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
@@ -648,6 +654,11 @@ const doDualSwitchMultiStyle = () => {
         DLog(`MULTI DUAL SWITCH${isFirst ? ' [FIRST]' : ''}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s → ${bb.bar}:${bb.beat} (${Object.keys(styleTracks).length} styles swapped)`);
         const aeFirst = styleTracks[currentStyleIdx];
         const vFadeEnd2 = aeFirst.current.envelopeEndsAtCtx || (aeFirst.current.startedAtCtx + Math.max(fadeInS, fadeOutS));
+
+        const dsXfadeS = Math.max(fadeInS, fadeOutS);
+        const dsMFadeStart = switchAtCtx - dsXfadeS * 0.5;
+        const dsMFadeEnd = switchAtCtx + dsXfadeS * 0.5;
+        syncExtraTracksOnJump(loopStartS, dsMFadeStart, dsMFadeEnd, dsXfadeS);
 
         const curOffsetD = aeFirst.offsetDiff || 0;
         transitionBase = raw;
@@ -774,6 +785,8 @@ const doSingleJump = () => {
         loopPhase = nextPhase;
         DLog(`SINGLE XFADE JUMP${isFirst ? ' [FIRST]' : ''} phase ${prevPhase}→${nextPhase}: raw=${raw.toFixed(3)} rem=${remainingToEnd.toFixed(4)}s switchAt=${switchAtCtx.toFixed(4)} xfade=${(xfadeS*1000).toFixed(1)}ms → target=${targetOffset.toFixed(4)}`);
         safeCleanupTrack(prevTrack);
+
+        syncExtraTracksOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
 
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
@@ -903,6 +916,11 @@ const doDualSwitch = () => {
         DLog(`  prev[${prevTrack.label}] will NOT hard-stop; cleanup after ctx=${cleanupAfterCtx.toFixed(3)} (naturalEnd=${naturalEndCtx.toFixed(3)})`);
         safeCleanupTrack(prevTrack);
         const vFadeEnd = newTrack.envelopeEndsAtCtx || (newTrack.startedAtCtx + Math.max(fadeInS, fadeOutS));
+
+        const xfadeS = Math.max(fadeInS, fadeOutS);
+        const dsFadeStart = fadeStartAtCtx || switchAtCtx - xfadeS * 0.5;
+        const dsFadeEnd = fadeEndAtCtx || switchAtCtx + xfadeS * 0.5;
+        syncExtraTracksOnJump(loopStartS, dsFadeStart, dsFadeEnd, xfadeS);
 
         transitionBase = raw;
         transitionStartTime = audioCtx.currentTime;
@@ -1523,7 +1541,7 @@ const playTrack = async (idx) => {
         const wasPlaying = !!(currentTrack && currentTrack.source);
         if (wasPlaying) {
             DLog('playTrack: fading out previous track...');
-            fadeOutCurrentTrack(0.3); // 0.3秒淡出
+            fadeOutCurrentTrack(3.0); // 3秒淡出
             // 等待淡出完成
             await new Promise(r => setTimeout(r, 300));
         }
@@ -1604,7 +1622,7 @@ const playTrack = async (idx) => {
                 const trackGain = audioCtx.createGain();
                 const baseVol = (et.volume != null) ? Number(et.volume) : 1.0;
                 trackGain.gain.value = baseVol;
-                trackGain.connect(masterGain);
+                trackGain.connect(configGainNode || masterGain);
                 const trk = createTrack('et-' + (et.name || etIdx));
                 const ok = playSegmentAt(trk, trackStartOffset, startAt, {
                     enableLoop: false,
@@ -1654,6 +1672,13 @@ const playTrack = async (idx) => {
                 const ctxCurrentTime = audioCtx.currentTime;
                 const now = startAt !== null ? startAt : (ctxCurrentTime + 0.05);
                 const initialGain = (startAt !== null) ? 1.0 : ((fadeInS > 0.0002) ? 0.0 : 1.0);
+                const trackGain = cfg.gain != null ? Number(cfg.gain) : 1.0;
+                
+                if (configGainNode) {
+                    configGainNode.gain.cancelScheduledValues(ctxCurrentTime);
+                    configGainNode.gain.setValueAtTime(trackGain, ctxCurrentTime);
+                }
+                
                 const timePerBeat = 60.0 / cfg.bpm;
                 const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
 
@@ -1674,7 +1699,7 @@ const playTrack = async (idx) => {
 
                     const styleGain = audioCtx.createGain();
                     styleGain.gain.value = isDefault ? 1.0 : 0.0;
-                    styleGain.connect(masterGain);
+                    styleGain.connect(configGainNode || masterGain);
 
                     const trackA = createTrack(sIdx === -1 ? 'default-A' : `style-${sIdx}-A`);
                     const trackB = createTrack(sIdx === -1 ? 'default-B' : `style-${sIdx}-B`);
@@ -1755,6 +1780,12 @@ const playTrack = async (idx) => {
                 const ctxCurrentTime = audioCtx.currentTime;
                 const now = startAt !== null ? startAt : (ctxCurrentTime + 0.05);
                 const initialGain = (startAt !== null) ? 1.0 : ((fadeInS > 0.0002) ? 0.0 : 1.0);
+                const trackGain = cfg.gain != null ? Number(cfg.gain) : 1.0;
+                
+                if (configGainNode) {
+                    configGainNode.gain.cancelScheduledValues(ctxCurrentTime);
+                    configGainNode.gain.setValueAtTime(trackGain, ctxCurrentTime);
+                }
                 
                 DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
                 DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
@@ -1804,11 +1835,15 @@ const playTrack = async (idx) => {
             introPlaying = true;
             introTrack = createTrack('intro');
             const introStartTime = audioCtx.currentTime + 0.05;
+            const trackGain = cfg.gain != null ? Number(cfg.gain) : 1.0;
+            if (configGainNode) {
+                configGainNode.gain.cancelScheduledValues(introStartTime);
+                configGainNode.gain.setValueAtTime(trackGain, introStartTime);
+            }
             const ok = playSegmentAt(introTrack, 0, introStartTime, {
                 enableLoop: false,
                 initialGain: 1.0,
                 buffer: introBuffer,
-                connectTo: masterGain,
             });
             if (ok) {
                 DLog(`intro track started: dur=${introBuffer.duration.toFixed(3)}s`);
@@ -2164,7 +2199,7 @@ const playEnding = () => {
     // 2. 收尾音频直接播放（不淡入）
     endingGain = audioCtx.createGain();
     endingGain.gain.value = 1.0;
-    endingGain.connect(masterGain);
+    endingGain.connect(configGainNode || masterGain);
 
     endingTrack = createTrack('ending');
     const ok = playSegmentAt(endingTrack, 0, endingStartAt, {
@@ -2325,7 +2360,7 @@ const toggleFullLoop = () => {
         if (!loopSfxGain) {
             loopSfxGain = audioCtx.createGain();
             loopSfxGain.gain.value = 1.0;
-            loopSfxGain.connect(masterGain);
+            loopSfxGain.connect(configGainNode || masterGain);
         }
         const sfxTrack = createTrack('loop-sfx');
         playSegmentAt(sfxTrack, 0, fadeInStartAt, {
@@ -2578,45 +2613,16 @@ const stopAll = async () => {
     cancelAnimationFrame(rafId);
     rafId = null;
 
-    const now = audioCtx.currentTime;
-    const fadeEnd = now + STOP_FADE_DURATION;
-    const fadeTargets = [];
-
-    const addFadeTarget = (gainNode) => {
-        if (!gainNode) return;
+    if (audioCtx && masterGain) {
+        const now = audioCtx.currentTime;
+        const fadeEnd = now + STOP_FADE_DURATION;
         try {
-            gainNode.gain.cancelScheduledValues(now);
-            gainNode.gain.setValueAtTime(gainNode.gain.value, now);
-            gainNode.gain.linearRampToValueAtTime(0.0, fadeEnd);
-            fadeTargets.push(gainNode);
+            masterGain.gain.cancelScheduledValues(now);
+            masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+            masterGain.gain.linearRampToValueAtTime(0.0, fadeEnd);
         } catch(_) {}
-    };
-
-    if (multiStyleMode) {
-        for (const sIdx in styleTracks) {
-            const entry = styleTracks[sIdx];
-            if (!entry) continue;
-            for (const tk of [entry.current, entry.next]) {
-                if (tk && tk.gain) addFadeTarget(tk.gain);
-            }
-            if (entry.styleGain) addFadeTarget(entry.styleGain);
-        }
+        await new Promise(resolve => setTimeout(resolve, STOP_FADE_DURATION * 1000));
     }
-
-    if (currentTrack && currentTrack.gain) addFadeTarget(currentTrack.gain);
-    if (nextTrack && nextTrack.gain) addFadeTarget(nextTrack.gain);
-
-    extraTracks.forEach(et => {
-        if (et.track && et.track.gain) addFadeTarget(et.track.gain);
-        if (et.gain) addFadeTarget(et.gain);
-    });
-
-    if (endingTrack && endingTrack.gain) addFadeTarget(endingTrack.gain);
-    if (endingGain) addFadeTarget(endingGain);
-    if (introTrack && introTrack.gain) addFadeTarget(introTrack.gain);
-    if (masterGain) addFadeTarget(masterGain);
-
-    await new Promise(resolve => setTimeout(resolve, STOP_FADE_DURATION * 1000));
 
     if (multiStyleMode) {
         for (const sIdx in styleTracks) {
@@ -2641,9 +2647,7 @@ const stopAll = async () => {
                 try { currentTrack.source.stop(); } catch(_){}
                 try { currentTrack.source.disconnect(); } catch(_){}
             }
-            if (currentTrack.gain) {
-                try { currentTrack.gain.disconnect(); } catch(_){}
-            }
+            if (currentTrack.gain) { try { currentTrack.gain.disconnect(); } catch(_){} }
         } catch(_) {}
     }
     if (nextTrack) {
@@ -2652,9 +2656,7 @@ const stopAll = async () => {
                 try { nextTrack.source.stop(); } catch(_){}
                 try { nextTrack.source.disconnect(); } catch(_){}
             }
-            if (nextTrack.gain) {
-                try { nextTrack.gain.disconnect(); } catch(_){}
-            }
+            if (nextTrack.gain) { try { nextTrack.gain.disconnect(); } catch(_){} }
         } catch(_) {}
     }
     currentTrack = null;
