@@ -1788,7 +1788,6 @@ const playTrack = async (idx) => {
             const runPostAudioTasks = () => {
                 scheduleNextLoop();
                 updateExtraTracksPanel();
-                updateVocalButton();
                 updateStyleButtons();
             };
 
@@ -1914,56 +1913,6 @@ const updateLoadingUI = (loading, idx) => {
 };
 
 let loopBroken = false;
-
-const VOCAL_FADE_DURATION = 3.0;
-
-const getVocalTrack = () => {
-    return extraTracks.find(et => et.name && et.name.includes('人声'));
-};
-
-const updateVocalButton = () => {
-    const btn = $('vocalToggleBtn');
-    const container = $('vocalToggleContainer');
-    if (!btn || !container) return;
-    const vocalTrack = getVocalTrack();
-    if (!vocalTrack || !vocalTrack.gain) {
-        container.style.display = 'none';
-        return;
-    }
-    container.style.display = '';
-    btn.disabled = vocalTrack.switching;
-    const isOriginal = vocalTrack.muted !== true;
-    if (isOriginal) {
-        btn.textContent = '🎤 原唱模式';
-        btn.classList.add('active');
-    } else {
-        btn.textContent = '🎹 伴奏模式';
-        btn.classList.remove('active');
-    }
-};
-
-const toggleVocalMode = () => {
-    const vocalTrack = getVocalTrack();
-    if (!vocalTrack || !vocalTrack.gain || vocalTrack.switching) return;
-    const now = audioCtx.currentTime + 0.02;
-    const fadeEnd = now + VOCAL_FADE_DURATION;
-    const isOriginal = vocalTrack.muted !== true;
-    const targetGain = isOriginal ? 0 : (vocalTrack.volume || 1.0);
-    try {
-        vocalTrack.gain.gain.cancelScheduledValues(now);
-        vocalTrack.gain.gain.setValueAtTime(vocalTrack.gain.gain.value, now);
-        vocalTrack.gain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
-    } catch(e) { DLog('toggleVocalMode fade err', e.message); }
-    vocalTrack.switching = true;
-    vocalTrack.muted = isOriginal;
-    updateVocalButton();
-    DLog(`vocal mode: ${isOriginal ? 'accompaniment' : 'original'} (${VOCAL_FADE_DURATION}s fade)`);
-    setTimeout(() => {
-        vocalTrack.switching = false;
-        updateVocalButton();
-        DLog('vocal mode switch: COMPLETE');
-    }, VOCAL_FADE_DURATION * 1000);
-};
 
 const EXTRA_TRACK_FADE_DURATION = 3.0;
 
@@ -3405,7 +3354,6 @@ const init = async () => {
     if (flBtn) {
         flBtn.addEventListener('click', () => toggleFullLoop());
     }
-    $('vocalToggleBtn').addEventListener('click', () => toggleVocalMode());
 
     $('volumeSlider').addEventListener('input', (e) => {
         const v = parseInt(e.target.value);
