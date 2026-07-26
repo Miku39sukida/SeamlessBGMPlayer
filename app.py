@@ -53,7 +53,19 @@ DEFAULT_CONFIG = {
             "vocal_filename": "",
             "vocal_dir_id": "",
             "vocal_audio_zero_bar": 1,
-            "vocal_audio_zero_beat": 1
+            "vocal_audio_zero_beat": 1,
+            "extra_tracks_enabled": False,
+            "extra_tracks": [],
+            "ending_enabled": False,
+            "ending_filename": "",
+            "ending_dir_id": "",
+            "ending_fade_duration": 2.0,
+            "full_loop_enabled": False,
+            "full_loop_fade_duration": 2.0,
+            "loop_sfx_enabled": False,
+            "loop_sfx_filename": "",
+            "loop_sfx_dir_id": "",
+            "loop_sfx_fade_in_beats": 4
         }
     ]
 }
@@ -139,6 +151,51 @@ def load_config():
             continue
         if not t.get('category'):
             t['category'] = '未分类'
+        if 'extra_tracks' not in t or not isinstance(t['extra_tracks'], list):
+            extra = []
+            if t.get('vocal_enabled') and t.get('vocal_filename'):
+                extra.append({
+                    "name": "人声轨",
+                    "filename": t.get('vocal_filename', ''),
+                    "dir_id": t.get('vocal_dir_id', ''),
+                    "audio_zero_bar": t.get('vocal_audio_zero_bar', 1),
+                    "audio_zero_beat": t.get('vocal_audio_zero_beat', 1),
+                    "volume": 1.0
+                })
+            t['extra_tracks'] = extra
+            if extra and 'extra_tracks_enabled' not in t:
+                t['extra_tracks_enabled'] = True
+        if 'extra_tracks_enabled' not in t:
+            t['extra_tracks_enabled'] = bool(t.get('extra_tracks'))
+        for et in t['extra_tracks']:
+            if not isinstance(et, dict):
+                continue
+            if 'volume' not in et:
+                et['volume'] = 1.0
+            if 'audio_zero_bar' not in et:
+                et['audio_zero_bar'] = t.get('audio_zero_bar', 1)
+            if 'audio_zero_beat' not in et:
+                et['audio_zero_beat'] = t.get('audio_zero_beat', 1)
+            if 'dir_id' not in et or not et['dir_id']:
+                et['dir_id'] = t.get('bgm_dir_id', 'default')
+        if 'ending_enabled' not in t:
+            t['ending_enabled'] = bool(t.get('ending_filename'))
+        if 'ending_fade_duration' not in t or t['ending_fade_duration'] is None:
+            t['ending_fade_duration'] = 2.0
+        if 'ending_dir_id' not in t or not t['ending_dir_id']:
+            t['ending_dir_id'] = t.get('bgm_dir_id', 'default')
+        if 'full_loop_enabled' not in t:
+            t['full_loop_enabled'] = False
+        if 'full_loop_fade_duration' not in t or t['full_loop_fade_duration'] is None:
+            t['full_loop_fade_duration'] = 2.0
+        if 'loop_sfx_enabled' not in t:
+            t['loop_sfx_enabled'] = False
+        if 'loop_sfx_filename' not in t:
+            t['loop_sfx_filename'] = ''
+        if 'loop_sfx_dir_id' not in t or not t['loop_sfx_dir_id']:
+            t['loop_sfx_dir_id'] = t.get('bgm_dir_id', 'default')
+        if 'loop_sfx_fade_in_beats' not in t or t['loop_sfx_fade_in_beats'] is None:
+            t['loop_sfx_fade_in_beats'] = 4
     return cfg
 
 def save_config_raw(cfg):
