@@ -60,6 +60,23 @@ let vocalGain = null;
 let vocalEnabled = false;
 let vocalSwitching = false;
 
+let extraTracks = [];
+let extraTracksEnabled = false;
+
+let endingEnabled = false;
+let endingBuffer = null;
+let endingGain = null;
+let endingTrack = null;
+let endingPlaying = false;
+
+let fullLoopEnabled = false;
+let isFullLoopMode = false;
+let fullLoopSwitching = false;
+
+let loopSfxEnabled = false;
+let loopSfxBuffer = null;
+let loopSfxGain = null;
+
 const $ = (id) => document.getElementById(id);
 
 const fmtTime = (s) => {
@@ -366,7 +383,51 @@ const scheduleNextLoop = () => {
     }, triggerDelayMs);
 };
 
+const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => {
+    if (!extraTracksEnabled || !activeTrackCfg) return;
+    const timePerBeat = 60.0 / activeTrackCfg.bpm;
+    const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
+    extraTracks.forEach(et => {
+        if (!et.buffer || !et.gain) return;
+        const azb = et.audio_zero_bar != null ? et.audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
+        const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
+        const zOffset = ((azb - 1) * (activeTrackCfg.beats_per_bar || 4) + (azbt - 1)) * timePerBeat;
+        const offsetDiff = defZeroOffset - zOffset;
+        const trackTarget = Math.max(0, targetOffset + offsetDiff);
+
+        const newTrk = createTrack('et-' + (et.name || 'next'));
+        const ok = playSegmentAt(newTrk, trackTarget, fadeStartAtCtx, {
+            enableLoop: false,
+            initialGain: 0.0,
+            buffer: et.buffer,
+            connectTo: et.gain,
+        });
+        if (!ok) return;
+
+        try {
+            newTrk.gain.gain.cancelScheduledValues(fadeStartAtCtx);
+            newTrk.gain.gain.setValueAtTime(0.0, fadeStartAtCtx);
+            newTrk.gain.gain.linearRampToValueAtTime(1.0, fadeEndAtCtx);
+        } catch(e) {}
+
+        if (et.track && et.track.gain) {
+            try {
+                et.track.gain.gain.cancelScheduledValues(fadeStartAtCtx);
+                et.track.gain.gain.setValueAtTime(et.track.gain.gain.value, fadeStartAtCtx);
+                et.track.gain.gain.linearRampToValueAtTime(0.0, fadeEndAtCtx);
+            } catch(e) {}
+            et.track.stopScheduled = true;
+            et.track.stopAtCtx = fadeEndAtCtx + 0.0005;
+            try { if (et.track.source) et.track.source.stop(et.track.stopAtCtx); } catch(_) {}
+            safeCleanupTrack(et.track);
+        }
+        newTrk.offsetDiff = offsetDiff;
+        et.track = newTrk;
+    });
+};
+
 const syncVocalOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => {
+    syncExtraTracksOnJump(targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS);
     if (!vocalEnabled || !vocalTrack || !vocalBuffer || !vocalGain) return;
     if (!activeTrackCfg) return;
     const vAzb = activeTrackCfg.vocal_audio_zero_bar != null ? activeTrackCfg.vocal_audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
@@ -389,7 +450,7 @@ const syncVocalOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => 
     try {
         newVocalTrack.gain.gain.cancelScheduledValues(fadeStartAtCtx);
         newVocalTrack.gain.gain.setValueAtTime(0.0, fadeStartAtCtx);
-        newVocalTrack.gain.gain.linearRampToValueAtTime(vocalMode === 'original' ? 1.0 : 0.0, fadeEndAtCtx);
+        newVocalTrack.gain.gain.linearRampToValueAtTime(1.0, fadeEndAtCtx);
     } catch(e) {}
 
     if (vocalTrack && vocalTrack.gain) {
@@ -1385,8 +1446,12 @@ const playTrack = async (idx) => {
 
         const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         const vocalEnabledPre = !!(cfg.vocal_enabled && cfg.vocal_filename);
+        const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
+        const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
         const styleBuffers = {};
         let vocalBufferPre = null;
+        let extraTrackBuffers = [];
+        let endingBufferPre = null;
 
         const extraLoadPromises = [];
         if (multiStyleModePre) {
@@ -1414,6 +1479,48 @@ const playTrack = async (idx) => {
                     DLog('preload vocal track done');
                 } catch(e) {
                     DLog('preload vocal track failed:', e.message);
+                }
+            })());
+        }
+        if (extraTracksEnabledPre) {
+            cfg.extra_tracks.forEach((et, etIdx) => {
+                if (!et.filename) return;
+                extraLoadPromises.push((async () => {
+                    try {
+                        const etfn = et.filename;
+                        const etdir = et.dir_id || cfg.bgm_dir_id || '';
+                        const buf = await loadBuffer(etfn, etdir);
+                        extraTrackBuffers[etIdx] = buf;
+                        DLog(`preload extra track ${etIdx} (${et.name}) done`);
+                    } catch(e) {
+                        DLog(`preload extra track ${etIdx} failed: ${e.message}`);
+                    }
+                })());
+            });
+        }
+        if (endingEnabledPre) {
+            extraLoadPromises.push((async () => {
+                try {
+                    const efn = cfg.ending_filename;
+                    const edir = cfg.ending_dir_id || cfg.bgm_dir_id || '';
+                    endingBufferPre = await loadBuffer(efn, edir);
+                    DLog('preload ending audio done');
+                } catch(e) {
+                    DLog('preload ending audio failed: ' + e.message);
+                }
+            })());
+        }
+        const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
+        let loopSfxBufferPre = null;
+        if (loopSfxEnabledPre) {
+            extraLoadPromises.push((async () => {
+                try {
+                    const lfn = cfg.loop_sfx_filename;
+                    const ldir = cfg.loop_sfx_dir_id || cfg.bgm_dir_id || '';
+                    loopSfxBufferPre = await loadBuffer(lfn, ldir);
+                    DLog('preload loop sfx done');
+                } catch(e) {
+                    DLog('preload loop sfx failed: ' + e.message);
                 }
             })());
         }
@@ -1543,6 +1650,60 @@ const playTrack = async (idx) => {
             }
         };
 
+        const startExtraTracks = (startAt, baseOffset) => {
+            extraTracks = [];
+            extraTracksEnabled = false;
+            if (!extraTracksEnabledPre || !cfg.extra_tracks || cfg.extra_tracks.length === 0) return;
+            const timePerBeat = 60.0 / cfg.bpm;
+            const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
+            const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
+            cfg.extra_tracks.forEach((et, etIdx) => {
+                const buf = extraTrackBuffers[etIdx];
+                if (!et.filename || !buf) return;
+                const azb = et.audio_zero_bar != null ? et.audio_zero_bar : cfg.audio_zero_bar || 1;
+                const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : cfg.audio_zero_beat || 1;
+                const zOffset = ((azb - 1) * (cfg.beats_per_bar || 4) + (azbt - 1)) * timePerBeat;
+                const offsetDiff = defZeroOffset - zOffset;
+                const trackStartOffset = Math.max(0, baseOffset + offsetDiff);
+                const trackGain = audioCtx.createGain();
+                const baseVol = (et.volume != null) ? Number(et.volume) : 1.0;
+                trackGain.gain.value = baseVol;
+                trackGain.connect(masterGain);
+                const trk = createTrack('et-' + (et.name || etIdx));
+                const ok = playSegmentAt(trk, trackStartOffset, startAt, {
+                    enableLoop: false,
+                    initialGain,
+                    buffer: buf,
+                    connectTo: trackGain,
+                });
+                if (ok) {
+                    trk.offsetDiff = offsetDiff;
+                    if (fadeInS > 0.0002 && trk.gain) {
+                        try {
+                            const g0 = Math.max(audioCtx.currentTime + 0.001, startAt);
+                            trk.gain.gain.cancelScheduledValues(g0);
+                            trk.gain.gain.setValueAtTime(0.0, g0);
+                            trk.gain.gain.linearRampToValueAtTime(1.0, g0 + fadeInS);
+                        } catch(e) { DLog(`et[${et.name}] initial fade-in err`, e.message); }
+                    }
+                    extraTracks.push({
+                        name: et.name || `轨道 ${etIdx + 1}`,
+                        buffer: buf,
+                        gain: trackGain,
+                        track: trk,
+                        offsetDiff: offsetDiff,
+                        volume: baseVol,
+                        audio_zero_bar: azb,
+                        audio_zero_beat: azbt,
+                    });
+                    DLog(`extra track ${etIdx} (${et.name}) started: offset=${trackStartOffset.toFixed(3)}s diff=${offsetDiff.toFixed(3)}s vol=${baseVol}`);
+                } else {
+                    try { trackGain.disconnect(); } catch(_) {}
+                }
+            });
+            extraTracksEnabled = extraTracks.length > 0;
+        };
+
         multiStyleMode = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         styleTracks = {};
         currentStyleIdx = -1;
@@ -1643,6 +1804,7 @@ const playTrack = async (idx) => {
             });
 
             startVocalTrack(now, startS);
+            startExtraTracks(now, startS);
 
             scheduleNextLoop();
             DLog(`playTrack: multiStyleMode active, ${Object.keys(styleTracks).length} style tracks ready`);
@@ -1681,22 +1843,55 @@ const playTrack = async (idx) => {
             }
 
             startVocalTrack(now, startS);
+            startExtraTracks(now, startS);
 
             scheduleNextLoop();
         }
+
+        // 收尾音频初始化（不立即播放）
+        endingEnabled = endingEnabledPre && !!endingBufferPre;
+        endingBuffer = endingBufferPre;
+        endingGain = null;
+        endingTrack = null;
+        endingPlaying = false;
+
+        // 完整循环初始化
+        fullLoopEnabled = !!cfg.full_loop_enabled;
+        isFullLoopMode = false;
+        fullLoopSwitching = false;
+
+        // 循环提示音效初始化（不立即播放）
+        loopSfxEnabled = loopSfxEnabledPre && !!loopSfxBufferPre;
+        loopSfxBuffer = loopSfxBufferPre;
+        loopSfxGain = null;
 
         startUiTicker();
 
         loopBroken = false;
         const breakBtn = $('breakLoopBtn');
+        const fullLoopBtn = $('fullLoopBtn');
         if (breakBtn) {
             breakBtn.disabled = false;
-            breakBtn.textContent = '⏭ 跳出循环';
+            if (endingEnabled) {
+                breakBtn.textContent = '🎵 收尾';
+            } else {
+                breakBtn.textContent = '⏭ 跳出循环';
+            }
+        }
+        if (fullLoopBtn) {
+            if (fullLoopEnabled) {
+                fullLoopBtn.style.display = '';
+                fullLoopBtn.disabled = false;
+                fullLoopBtn.textContent = '🔄 完整循环';
+            } else {
+                fullLoopBtn.style.display = 'none';
+            }
         }
 
         updateStyleButtons();
 
         updateVocalButton();
+        updateExtraTracksPanel();
 
         DLog('playTrack: COMPLETE');
     } catch (e) {
@@ -1788,6 +1983,48 @@ const toggleVocalMode = () => {
         updateVocalButton();
         DLog('vocal mode switch: COMPLETE');
     }, VOCAL_FADE_DURATION * 1000);
+};
+
+const EXTRA_TRACK_FADE_DURATION = 1.0;
+
+const updateExtraTracksPanel = () => {
+    const container = $('extraTracksContainer');
+    const list = $('extraTracksList');
+    if (!container || !list) return;
+    if (!extraTracksEnabled || extraTracks.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = '';
+    list.innerHTML = '';
+    extraTracks.forEach((et, idx) => {
+        const isOn = et.muted !== true;
+        const btn = document.createElement('button');
+        btn.className = 'et-toggle-btn' + (isOn ? ' active' : '');
+        btn.dataset.etIdx = idx;
+        btn.textContent = (isOn ? '🔊 ' : '🔇 ') + (et.name || `轨道 ${idx + 1}`);
+        btn.addEventListener('click', () => {
+            if (et.switching) return;
+            const now = audioCtx ? audioCtx.currentTime + 0.02 : 0;
+            const fadeEnd = now + EXTRA_TRACK_FADE_DURATION;
+            const targetGain = et.muted ? et.volume : 0;
+            if (et.gain) {
+                try {
+                    et.gain.gain.cancelScheduledValues(now);
+                    et.gain.gain.setValueAtTime(et.gain.gain.value, now);
+                    et.gain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
+                } catch(_) {}
+            }
+            et.muted = !et.muted;
+            et.switching = true;
+            btn.classList.toggle('active', !et.muted);
+            btn.textContent = (et.muted ? '🔇 ' : '🔊 ') + (et.name || `轨道 ${idx + 1}`);
+            setTimeout(() => {
+                et.switching = false;
+            }, EXTRA_TRACK_FADE_DURATION * 1000);
+        });
+        list.appendChild(btn);
+    });
 };
 
 const STYLE_FADE_DURATION = 3.0;
@@ -1900,6 +2137,12 @@ const switchStyle = (styleIdx) => {
 const breakLoop = () => {
     if (!currentTrack || !audioBuffer || loopBroken) return;
 
+    // 如果配置了收尾音频，执行收尾淡入淡出
+    if (endingEnabled && endingBuffer && !endingPlaying) {
+        playEnding();
+        return;
+    }
+
     loopBroken = true;
 
     clearTimeout(loopSchedulerTimer);
@@ -1931,8 +2174,531 @@ const breakLoop = () => {
         btn.disabled = true;
         btn.textContent = '✓ 已跳出循环';
     }
+    const flBtn = $('fullLoopBtn');
+    if (flBtn) flBtn.disabled = true;
 
     DLog(`breakLoop: loop disabled, natural end at ${audioDurS.toFixed(3)}s`);
+};
+
+const playEnding = () => {
+    if (!endingEnabled || !endingBuffer || endingPlaying) return;
+    if (!audioCtx || !masterGain) return;
+
+    endingPlaying = true;
+    loopBroken = true;
+
+    clearTimeout(loopSchedulerTimer);
+    loopSchedulerTimer = null;
+
+    const fadeDur = Number(activeTrackCfg.ending_fade_duration) || 2.0;
+    const now = audioCtx.currentTime + 0.02;
+    const fadeEndAt = now + fadeDur;
+    const endingStartAt = now + 1.0;
+
+    // 1. 所有循环音轨淡出（主轨、人声轨、额外轨道、多风格轨）
+    const fadeOutTrack = (trk) => {
+        if (!trk || !trk.gain) return;
+        try {
+            trk.gain.gain.cancelScheduledValues(now);
+            trk.gain.gain.setValueAtTime(trk.gain.gain.value, now);
+            trk.gain.gain.linearRampToValueAtTime(0.0, fadeEndAt);
+        } catch(_) {}
+    };
+
+    if (multiStyleMode) {
+        for (const sIdx in styleTracks) {
+            const entry = styleTracks[sIdx];
+            if (!entry) continue;
+            if (entry.current) {
+                try { if (entry.current.source) entry.current.source.loop = false; } catch(_) {}
+                fadeOutTrack(entry.current);
+            }
+            if (entry.next) {
+                try { if (entry.next.source) entry.next.source.loop = false; } catch(_) {}
+                fadeOutTrack(entry.next);
+            }
+        }
+    } else {
+        try { if (currentTrack && currentTrack.source) currentTrack.source.loop = false; } catch(_) {}
+        fadeOutTrack(currentTrack);
+        fadeOutTrack(nextTrack);
+    }
+
+    // 人声轨淡出
+    if (vocalTrack) {
+        try { if (vocalTrack.source) vocalTrack.source.loop = false; } catch(_) {}
+        fadeOutTrack(vocalTrack);
+    }
+
+    // 额外轨道淡出
+    extraTracks.forEach(et => {
+        if (et.track) {
+            try { if (et.track.source) et.track.source.loop = false; } catch(_) {}
+            fadeOutTrack(et.track);
+        }
+    });
+
+    // 2. 收尾音频直接播放（不淡入）
+    endingGain = audioCtx.createGain();
+    endingGain.gain.value = 1.0;
+    endingGain.connect(masterGain);
+
+    endingTrack = createTrack('ending');
+    const ok = playSegmentAt(endingTrack, 0, endingStartAt, {
+        enableLoop: false,
+        initialGain: 1.0,
+        buffer: endingBuffer,
+        connectTo: endingGain,
+    });
+
+    // 3. 更新按钮
+    const btn = $('breakLoopBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '🎵 收尾中…';
+    }
+
+    // 4. 淡出完成后清理旧轨道
+    setTimeout(() => {
+        // 停止并断开所有已淡出的循环轨道
+        if (multiStyleMode) {
+            for (const sIdx in styleTracks) {
+                const entry = styleTracks[sIdx];
+                if (!entry) continue;
+                for (const tk of [entry.current, entry.next]) {
+                    if (tk) {
+                        try { if (tk.source) tk.source.stop(); } catch(_){}
+                        try { if (tk.source) tk.source.disconnect(); } catch(_){}
+                        try { if (tk.gain) tk.gain.disconnect(); } catch(_){}
+                    }
+                }
+            }
+            styleTracks = {};
+        } else {
+            if (currentTrack) {
+                try { if (currentTrack.source) currentTrack.source.stop(); } catch(_){}
+                try { if (currentTrack.source) currentTrack.source.disconnect(); } catch(_){}
+                try { if (currentTrack.gain) currentTrack.gain.disconnect(); } catch(_){}
+            }
+            if (nextTrack) {
+                try { if (nextTrack.source) nextTrack.source.stop(); } catch(_){}
+                try { if (nextTrack.source) nextTrack.source.disconnect(); } catch(_){}
+                try { if (nextTrack.gain) nextTrack.gain.disconnect(); } catch(_){}
+            }
+            currentTrack = null;
+            nextTrack = null;
+        }
+        if (vocalTrack) {
+            try { if (vocalTrack.source) vocalTrack.source.stop(); } catch(_){}
+            try { if (vocalTrack.source) vocalTrack.source.disconnect(); } catch(_){}
+            try { if (vocalTrack.gain) vocalTrack.gain.disconnect(); } catch(_){}
+            vocalTrack = null;
+        }
+        if (vocalGain) { try { vocalGain.disconnect(); } catch(_){} vocalGain = null; }
+        extraTracks.forEach(et => {
+            if (et.track) {
+                try { if (et.track.source) et.track.source.stop(); } catch(_){}
+                try { if (et.track.source) et.track.source.disconnect(); } catch(_){}
+                try { if (et.track.gain) et.track.gain.disconnect(); } catch(_){}
+            }
+            if (et.gain) { try { et.gain.disconnect(); } catch(_){} }
+        });
+        extraTracks = [];
+        extraTracksEnabled = false;
+        audioBuffer = null;
+
+        if (btn) btn.textContent = '✓ 已收尾';
+        DLog('playEnding: crossfade complete, old tracks cleaned up');
+    }, fadeDur * 1000 + 100);
+
+    DLog(`playEnding: starting ${fadeDur.toFixed(1)}s crossfade to ending audio`);
+};
+
+const toggleFullLoop = () => {
+    if (!currentTrack || !audioBuffer || fullLoopSwitching) return;
+    if (!activeTrackCfg) return;
+
+    fullLoopSwitching = true;
+
+    const goingToFull = !isFullLoopMode;
+
+    // 切换到完整循环：只改循环范围，不创建新轨道，当前轨道继续播放
+    if (goingToFull) {
+        if (!window._savedLoopParams) {
+            window._savedLoopParams = {
+                loopStartS, loopEndS, loopDurS, fadeInS, fadeOutS,
+            };
+        }
+        loopStartS = 0;
+        loopEndS = audioDurS;
+        loopDurS = loopEndS - loopStartS;
+        fadeInS = 0;
+        fadeOutS = 0;
+
+        // 多风格模式：同步更新各风格的循环范围
+        if (multiStyleMode) {
+            for (const sIdx in styleTracks) {
+                const entry = styleTracks[sIdx];
+                if (!entry) continue;
+                const offsetDiff = entry.offsetDiff || 0;
+                entry.loopStartS = Math.max(0, offsetDiff);
+                entry.loopEndS = Math.max(entry.loopStartS + 0.01, audioDurS + offsetDiff);
+            }
+        }
+
+        isFullLoopMode = true;
+        fullLoopSwitching = false;
+
+        const flBtn = $('fullLoopBtn');
+        if (flBtn) flBtn.textContent = '↩️ 返回循环段';
+
+        clearTimeout(loopSchedulerTimer);
+        loopSchedulerTimer = null;
+        scheduleNextLoop();
+
+        DLog('toggleFullLoop: switched to full loop mode (no track change)');
+        return;
+    }
+
+    // 以下为「返回循环段」逻辑
+    const curRaw = getRawPlaybackPos(currentTrack);
+    const fadeDurCfg = Number(activeTrackCfg.full_loop_fade_duration) || 2.0;
+
+    const origLoopStart = window._savedLoopParams ? window._savedLoopParams.loopStartS : loopStartS;
+    const origLoopEnd = window._savedLoopParams ? window._savedLoopParams.loopEndS : loopEndS;
+
+    // 循环提示音效：计算预淡入起点
+    let fadeInStartOffset = origLoopStart;
+    let sfxFadeDur = fadeDurCfg;
+    if (loopSfxEnabled && loopSfxBuffer) {
+        const timePerBeat = 60.0 / activeTrackCfg.bpm;
+        const fadeInBeats = Number(activeTrackCfg.loop_sfx_fade_in_beats) || 4;
+        const fadeInSec = fadeInBeats * timePerBeat;
+        fadeInStartOffset = Math.max(0, origLoopStart - fadeInSec);
+        sfxFadeDur = fadeInSec;
+    }
+
+    // 判断是否需要交叉淡入淡出
+    let needFade = false;
+    let targetStartOffset = curRaw;
+
+    const inLoopSeg = curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01;
+    if (inLoopSeg) {
+        needFade = false;
+        targetStartOffset = curRaw;
+    } else {
+        needFade = true;
+        targetStartOffset = fadeInStartOffset;
+    }
+
+    const fadeDur = needFade ? sfxFadeDur : 0.02;
+    const now = audioCtx.currentTime + 0.02;
+
+    // 先淡出1秒，然后新轨道+音效同时开始淡入
+    const FADE_OUT_DUR = 1.0;
+    const fadeOutEndAt = now + FADE_OUT_DUR;
+    const fadeInStartAt = needFade ? fadeOutEndAt : now;
+    const fadeEndAt = fadeInStartAt + fadeDur;
+
+    // 目标循环范围（主轨视角）
+    const targetLoopStart = origLoopStart;
+    const targetLoopEnd = origLoopEnd;
+
+    // 播放循环提示音效（与新轨道同时开始，即淡出完成后）
+    if (needFade && loopSfxEnabled && loopSfxBuffer) {
+        if (!loopSfxGain) {
+            loopSfxGain = audioCtx.createGain();
+            loopSfxGain.gain.value = 1.0;
+            loopSfxGain.connect(masterGain);
+        }
+        const sfxTrack = createTrack('loop-sfx');
+        playSegmentAt(sfxTrack, 0, fadeInStartAt, {
+            enableLoop: false,
+            initialGain: 1.0,
+            buffer: loopSfxBuffer,
+            connectTo: loopSfxGain,
+        });
+        DLog('toggleFullLoop: loop sfx scheduled at ' + fadeInStartAt.toFixed(3));
+    }
+
+    const fadeOutTrack = (trk) => {
+        if (!trk || !trk.gain) return;
+        try {
+            trk.gain.gain.cancelScheduledValues(now);
+            trk.gain.gain.setValueAtTime(trk.gain.gain.value, now);
+            trk.gain.gain.linearRampToValueAtTime(0.0, fadeOutEndAt);
+        } catch(_) {}
+    };
+
+    const startGain = needFade ? 0.0 : 1.0;
+
+    // 1. 主轨 / 多风格轨道切换
+    let newMainTrack = null;
+    let newNextTrack = null;
+    const newStyleTracks = {};
+
+    if (multiStyleMode) {
+        // 多风格模式：每个风格都做切换
+        for (const sIdx in styleTracks) {
+            const entry = styleTracks[sIdx];
+            if (!entry) continue;
+
+            const offsetDiff = entry.offsetDiff || 0;
+            const sLoopStart = Math.max(0, targetLoopStart + offsetDiff);
+            const sLoopEnd = Math.max(sLoopStart + 0.01, targetLoopEnd + offsetDiff);
+
+            let sStartOffset;
+            if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
+                const sCurRaw = entry.current ? getRawPlaybackPos(entry.current) : (targetStartOffset + offsetDiff);
+                sStartOffset = Math.max(0, sCurRaw);
+            } else {
+                sStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
+            }
+
+            const trackA = createTrack(`full-fl-${sIdx}-A`);
+            const trackB = createTrack(`full-fl-${sIdx}-B`);
+            const ok = playSegmentAt(trackA, sStartOffset, fadeInStartAt, {
+                enableLoop: false,
+                initialGain: 1.0,
+                buffer: entry.buffer,
+                connectTo: entry.styleGain,
+            });
+
+            if (ok && needFade) {
+                try {
+                    trackA.gain.gain.cancelScheduledValues(fadeInStartAt);
+                    trackA.gain.gain.setValueAtTime(0.0, fadeInStartAt);
+                    trackA.gain.gain.linearRampToValueAtTime(1.0, fadeEndAt);
+                } catch(_) {}
+            }
+
+            // 旧轨道淡出
+            if (entry.current) fadeOutTrack(entry.current);
+            if (entry.next) fadeOutTrack(entry.next);
+
+            newStyleTracks[sIdx] = {
+                ...entry,
+                current: ok ? trackA : entry.current,
+                next: trackB,
+                loopStartS: sLoopStart,
+                loopEndS: sLoopEnd,
+            };
+        }
+
+        // 默认风格的 current 作为主轨引用
+        const defEntry = newStyleTracks[-1] || newStyleTracks[0];
+        if (defEntry) {
+            newMainTrack = defEntry.current;
+            newNextTrack = defEntry.next;
+        }
+    } else {
+        // 单轨模式
+        newMainTrack = createTrack('seg-main');
+        newNextTrack = createTrack('seg-main-b');
+        const ok = playSegmentAt(newMainTrack, targetStartOffset, fadeInStartAt, {
+            enableLoop: true,
+            initialGain: startGain,
+            buffer: audioBuffer,
+            connectTo: masterGain,
+            loopStart: targetLoopStart,
+            loopEnd: targetLoopEnd,
+        });
+
+        if (ok && needFade) {
+            try {
+                newMainTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
+                newMainTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
+                newMainTrack.gain.gain.linearRampToValueAtTime(1.0, fadeEndAt);
+            } catch(_) {}
+        }
+
+        fadeOutTrack(currentTrack);
+        fadeOutTrack(nextTrack);
+    }
+
+    // 2. 人声轨同步切换
+    let newVocalTrack = null;
+    if (vocalEnabled && vocalBuffer && vocalGain) {
+        const timePerBeat = 60.0 / activeTrackCfg.bpm;
+        const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
+        const vAzb = (activeTrackCfg.vocal_audio_zero_bar != null) ? activeTrackCfg.vocal_audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
+        const vAzbt = (activeTrackCfg.vocal_audio_zero_beat != null) ? activeTrackCfg.vocal_audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
+        const vZeroOffset = ((vAzb - 1) * (activeTrackCfg.beats_per_bar || 4) + (vAzbt - 1)) * timePerBeat;
+        const vOffsetDiff = defZeroOffset - vZeroOffset;
+
+        let vStartOffset;
+        if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
+            const vCurRaw = vocalTrack ? getRawPlaybackPos(vocalTrack) : (targetStartOffset + vOffsetDiff);
+            vStartOffset = Math.max(0, vCurRaw);
+        } else {
+            vStartOffset = Math.max(0, fadeInStartOffset + vOffsetDiff);
+        }
+
+        const vTargetGain = vocalMode === 'original' ? 1.0 : 0.0;
+
+        newVocalTrack = createTrack('seg-vocal');
+        const vok = playSegmentAt(newVocalTrack, vStartOffset, fadeInStartAt, {
+            enableLoop: true,
+            initialGain: needFade ? 0.0 : vTargetGain,
+            buffer: vocalBuffer,
+            connectTo: vocalGain,
+            loopStart: Math.max(0, targetLoopStart + vOffsetDiff),
+            loopEnd: Math.max(0.01, targetLoopEnd + vOffsetDiff),
+        });
+        if (vok && needFade) {
+            try {
+                newVocalTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
+                newVocalTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
+                newVocalTrack.gain.gain.linearRampToValueAtTime(vTargetGain, fadeEndAt);
+            } catch(_) {}
+        }
+        if (vocalTrack) fadeOutTrack(vocalTrack);
+    }
+
+    // 3. 额外轨道同步切换
+    const newExtraTracks = [];
+    if (extraTracksEnabled && extraTracks.length > 0) {
+        const timePerBeat = 60.0 / activeTrackCfg.bpm;
+        const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
+
+        extraTracks.forEach((et, etIdx) => {
+            if (!et.buffer || !et.gain) {
+                newExtraTracks.push(et);
+                return;
+            }
+            const azb = et.audio_zero_bar != null ? et.audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
+            const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
+            const zOffset = ((azb - 1) * (activeTrackCfg.beats_per_bar || 4) + (azbt - 1)) * timePerBeat;
+            const offsetDiff = defZeroOffset - zOffset;
+
+            let etStartOffset;
+            if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
+                const etCurRaw = et.track ? getRawPlaybackPos(et.track) : (targetStartOffset + offsetDiff);
+                etStartOffset = Math.max(0, etCurRaw);
+            } else {
+                etStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
+            }
+
+            const etTargetGain = et.muted ? 0.0 : 1.0;
+
+            const newEtTrack = createTrack(`seg-et-${etIdx}`);
+            const etok = playSegmentAt(newEtTrack, etStartOffset, fadeInStartAt, {
+                enableLoop: true,
+                initialGain: needFade ? 0.0 : etTargetGain,
+                buffer: et.buffer,
+                connectTo: et.gain,
+                loopStart: Math.max(0, targetLoopStart + offsetDiff),
+                loopEnd: Math.max(0.01, targetLoopEnd + offsetDiff),
+            });
+
+            if (etok && needFade) {
+                try {
+                    newEtTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
+                    newEtTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
+                    newEtTrack.gain.gain.linearRampToValueAtTime(etTargetGain, fadeEndAt);
+                } catch(_) {}
+            }
+            if (etok) newEtTrack.offsetDiff = offsetDiff;
+
+            if (et.track) fadeOutTrack(et.track);
+
+            newExtraTracks.push({
+                ...et,
+                track: etok ? newEtTrack : et.track,
+            });
+        });
+    }
+
+    // 4. 更新按钮状态
+    const flBtn = $('fullLoopBtn');
+    if (flBtn) {
+        flBtn.disabled = true;
+        flBtn.textContent = '🔄 完整循环';
+    }
+
+    // 5. 切换完成后替换并清理（淡出1秒 + 淡入fadeDur秒）
+    const totalWaitMs = needFade ? (FADE_OUT_DUR + fadeDur) * 1000 + 50 : 100;
+    setTimeout(() => {
+        if (multiStyleMode) {
+            // 清理旧风格轨道
+            for (const sIdx in styleTracks) {
+                const entry = styleTracks[sIdx];
+                if (!entry) continue;
+                for (const tk of [entry.current, entry.next]) {
+                    if (tk) {
+                        try { if (tk.source) tk.source.stop(); } catch(_){}
+                        try { if (tk.source) tk.source.disconnect(); } catch(_){}
+                        try { if (tk.gain) tk.gain.disconnect(); } catch(_){}
+                    }
+                }
+            }
+            styleTracks = newStyleTracks;
+            const defEntry = styleTracks[-1] || styleTracks[0];
+            if (defEntry) {
+                currentTrack = defEntry.current;
+                nextTrack = defEntry.next;
+            }
+        } else {
+            // 清理旧主轨
+            if (currentTrack) {
+                try { if (currentTrack.source) currentTrack.source.stop(); } catch(_){}
+                try { if (currentTrack.source) currentTrack.source.disconnect(); } catch(_){}
+                try { if (currentTrack.gain) currentTrack.gain.disconnect(); } catch(_){}
+            }
+            if (nextTrack) {
+                try { if (nextTrack.source) nextTrack.source.stop(); } catch(_){}
+                try { if (nextTrack.source) nextTrack.source.disconnect(); } catch(_){}
+                try { if (nextTrack.gain) nextTrack.gain.disconnect(); } catch(_){}
+            }
+            currentTrack = newMainTrack;
+            nextTrack = newNextTrack;
+        }
+
+        // 清理旧人声轨
+        if (vocalTrack) {
+            try { if (vocalTrack.source) vocalTrack.source.stop(); } catch(_){}
+            try { if (vocalTrack.source) vocalTrack.source.disconnect(); } catch(_){}
+            try { if (vocalTrack.gain) vocalTrack.gain.disconnect(); } catch(_){}
+        }
+        if (newVocalTrack) vocalTrack = newVocalTrack;
+
+        // 清理旧额外轨道并替换
+        if (newExtraTracks.length > 0) {
+            extraTracks.forEach((et, i) => {
+                if (et.track && newExtraTracks[i] && newExtraTracks[i].track !== et.track) {
+                    try { if (et.track.source) et.track.source.stop(); } catch(_){}
+                    try { if (et.track.source) et.track.source.disconnect(); } catch(_){}
+                    try { if (et.track.gain) et.track.gain.disconnect(); } catch(_){}
+                }
+            });
+            extraTracks = newExtraTracks;
+        }
+
+        // 恢复原始循环参数
+        if (window._savedLoopParams) {
+            loopStartS = window._savedLoopParams.loopStartS;
+            loopEndS = window._savedLoopParams.loopEndS;
+            loopDurS = window._savedLoopParams.loopDurS;
+            fadeInS = window._savedLoopParams.fadeInS;
+            fadeOutS = window._savedLoopParams.fadeOutS;
+            window._savedLoopParams = null;
+        }
+
+        isFullLoopMode = false;
+        fullLoopSwitching = false;
+
+        if (flBtn) {
+            flBtn.disabled = false;
+            flBtn.textContent = '🔄 完整循环';
+        }
+
+        // 重新调度循环
+        clearTimeout(loopSchedulerTimer);
+        loopSchedulerTimer = null;
+        scheduleNextLoop();
+
+        DLog(`toggleFullLoop: COMPLETE (mode=segment, fade=${needFade ? 'yes' : 'no'}, fadeOut=${FADE_OUT_DUR}s, fadeIn=${fadeDur.toFixed(2)}s, multiStyle=${multiStyleMode})`);
+    }, totalWaitMs);
 };
 
 const stopAll = async () => {
@@ -1998,10 +2764,48 @@ const stopAll = async () => {
     vocalEnabled = false;
     vocalMode = 'original';
 
+    extraTracks.forEach(et => {
+        if (et.track) {
+            try {
+                if (et.track.source) { try { et.track.source.stop(); } catch(_){} try { et.track.source.disconnect(); } catch(_){} }
+                if (et.track.gain) { try { et.track.gain.disconnect(); } catch(_){} }
+            } catch(_) {}
+        }
+        if (et.gain) { try { et.gain.disconnect(); } catch(_){} }
+    });
+    extraTracks = [];
+    extraTracksEnabled = false;
+
+    if (endingTrack) {
+        try {
+            if (endingTrack.source) { try { endingTrack.source.stop(); } catch(_){} try { endingTrack.source.disconnect(); } catch(_){} }
+            if (endingTrack.gain) { try { endingTrack.gain.disconnect(); } catch(_){} }
+        } catch(_) {}
+        endingTrack = null;
+    }
+    if (endingGain) { try { endingGain.disconnect(); } catch(_){} endingGain = null; }
+    endingBuffer = null;
+    endingEnabled = false;
+    endingPlaying = false;
+
+    isFullLoopMode = false;
+    fullLoopSwitching = false;
+    if (window._savedLoopParams) window._savedLoopParams = null;
+
+    loopSfxEnabled = false;
+    loopSfxBuffer = null;
+    if (loopSfxGain) { try { loopSfxGain.disconnect(); } catch(_){} loopSfxGain = null; }
+
     const breakBtn = $('breakLoopBtn');
     if (breakBtn) {
         breakBtn.disabled = true;
         breakBtn.textContent = '⏭ 跳出循环';
+    }
+    const flBtn2 = $('fullLoopBtn');
+    if (flBtn2) {
+        flBtn2.disabled = true;
+        flBtn2.style.display = 'none';
+        flBtn2.textContent = '🔄 完整循环';
     }
     
     if (audioCtx) {
@@ -2071,18 +2875,25 @@ setInterval(() => {
 }, 16);
 
 const renderMarkers = () => {
-    let totalDur = Math.max(audioDurS || 1, loopEndS || 1);
-    let mLoopStart = loopStartS;
-    let mLoopEnd = loopEndS;
+    // 完整循环模式下，标记始终显示原始循环段位置
+    const savedP = window._savedLoopParams;
+    const mLoopStartSrc = (isFullLoopMode && savedP) ? savedP.loopStartS : loopStartS;
+    const mLoopEndSrc = (isFullLoopMode && savedP) ? savedP.loopEndS : loopEndS;
+    let totalDur = Math.max(audioDurS || 1, mLoopEndSrc || 1);
+    let mLoopStart = mLoopStartSrc;
+    let mLoopEnd = mLoopEndSrc;
     let mFadeOutStart = fadeOutStartS;
     let mJumpStart = jumpSegStartS;
     let mJumpEnd = jumpSegEndS;
     if (multiStyleMode && currentStyleIdx >= 0) {
         const entry = styleTracks[currentStyleIdx];
         if (entry) {
-            totalDur = Math.max(entry.duration || audioDurS || 1, entry.loopEndS || loopEndS || 1);
-            mLoopStart = entry.loopStartS || loopStartS;
-            mLoopEnd = entry.loopEndS || loopEndS;
+            // 多风格模式下也用原始循环范围显示标记
+            const eLoopStart = (isFullLoopMode && savedP) ? Math.max(0, savedP.loopStartS + (entry.offsetDiff || 0)) : (entry.loopStartS || loopStartS);
+            const eLoopEnd = (isFullLoopMode && savedP) ? Math.max(eLoopStart + 0.01, savedP.loopEndS + (entry.offsetDiff || 0)) : (entry.loopEndS || loopEndS);
+            totalDur = Math.max(entry.duration || audioDurS || 1, eLoopEnd || 1);
+            mLoopStart = eLoopStart;
+            mLoopEnd = eLoopEnd;
             if (entry.offsetDiff != null) {
                 mFadeOutStart = fadeOutStartS + entry.offsetDiff;
                 mJumpStart = jumpSegEnabled ? Math.max(0, jumpSegStartS + entry.offsetDiff) : 0;
@@ -2671,6 +3482,10 @@ const init = async () => {
     $('stopBtn').addEventListener('click', async () => await stopAll());
 
     $('breakLoopBtn').addEventListener('click', () => breakLoop());
+    const flBtn = $('fullLoopBtn');
+    if (flBtn) {
+        flBtn.addEventListener('click', () => toggleFullLoop());
+    }
     $('vocalToggleBtn').addEventListener('click', () => toggleVocalMode());
 
     $('volumeSlider').addEventListener('input', (e) => {

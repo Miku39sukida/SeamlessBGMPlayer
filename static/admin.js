@@ -47,6 +47,18 @@ function defaultTrack() {
     vocal_dir_id: '',
     vocal_audio_zero_bar: 1,
     vocal_audio_zero_beat: 1,
+    extra_tracks_enabled: false,
+    extra_tracks: [],
+    ending_enabled: false,
+    ending_filename: '',
+    ending_dir_id: '',
+    ending_fade_duration: 2.0,
+    full_loop_enabled: false,
+    full_loop_fade_duration: 2.0,
+    loop_sfx_enabled: false,
+    loop_sfx_filename: '',
+    loop_sfx_dir_id: '',
+    loop_sfx_fade_in_beats: 4,
   };
 }
 
@@ -146,6 +158,30 @@ async function loadConfig() {
     if (typeof t.jump_seg_start_beat === 'undefined') t.jump_seg_start_beat = 0;
     if (typeof t.jump_seg_end_bar === 'undefined') t.jump_seg_end_bar = 0;
     if (typeof t.jump_seg_end_beat === 'undefined') t.jump_seg_end_beat = 0;
+    // 额外轨道：旧 vocal 配置迁移 + 默认值填充
+    if (!Array.isArray(t.extra_tracks)) {
+      const extra = [];
+      if (t.vocal_enabled && t.vocal_filename) {
+        extra.push({
+          name: '人声轨',
+          filename: t.vocal_filename || '',
+          dir_id: t.vocal_dir_id || t.bgm_dir_id || 'default',
+          audio_zero_bar: t.vocal_audio_zero_bar != null ? t.vocal_audio_zero_bar : 1,
+          audio_zero_beat: t.vocal_audio_zero_beat != null ? t.vocal_audio_zero_beat : 1,
+          volume: 1.0
+        });
+      }
+      t.extra_tracks = extra;
+      if (extra.length > 0 && t.extra_tracks_enabled == null) t.extra_tracks_enabled = true;
+    }
+    if (t.extra_tracks_enabled == null) t.extra_tracks_enabled = (t.extra_tracks && t.extra_tracks.length > 0);
+    if (!Array.isArray(t.extra_tracks)) t.extra_tracks = [];
+    t.extra_tracks.forEach(et => {
+      if (et.volume == null) et.volume = 1.0;
+      if (et.audio_zero_bar == null) et.audio_zero_bar = t.audio_zero_bar || 1;
+      if (et.audio_zero_beat == null) et.audio_zero_beat = t.audio_zero_beat || 1;
+      if (!et.dir_id) et.dir_id = t.bgm_dir_id || 'default';
+    });
   });
   state.tracks = tracks;
   state.dirty = false;
@@ -511,24 +547,81 @@ function renderTrackCard(t, index) {
       </div>
     </div>
 
-    <div class="section-title">🎤 人声轨 / 伴奏模式（可选）</div>
+    <div class="section-title">🎼 多轨道混音（可选）</div>
     <div class="field">
       <label class="checkbox-label">
-        <input type="checkbox" data-k="vocal_enabled"> 启用人声轨
+        <input type="checkbox" data-k="extra_tracks_enabled"> 启用额外轨道
       </label>
-      <div class="vocal-panel" data-k="vocal_panel" style="display:none; margin-top:12px;">
+      <div class="extra-tracks-panel" data-k="extra_tracks_panel" style="display:none; margin-top:12px;">
+        <div class="extra-tracks-list" data-k="extra_tracks_list"></div>
+        <button class="btn btn-small btn-primary" data-act="add-extra-track" style="margin-top:8px;">＋ 添加轨道</button>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：可添加多轨音频（如伴奏轨、人声轨、合唱轨等），播放器默认全开，可独立调节每轨音量
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">🎵 收尾音频（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="ending_enabled"> 启用收尾音频
+      </label>
+      <div class="ending-panel" data-k="ending_panel" style="display:none; margin-top:12px;">
         <div class="field">
-          <label>人声轨文件 <span class="hint">(可搜索过滤；与主曲目同目录)</span></label>
+          <label>收尾音频文件</label>
           <div class="file-picker">
-            <input type="search" class="vocal-file-search" placeholder="🔍 按文件名过滤人声轨…">
-            <select class="vocal-file-select" size="6" data-k="vocal_file_select"></select>
+            <input type="search" class="ending-file-search" placeholder="🔍 过滤文件…">
+            <select class="ending-file-select" size="5"></select>
           </div>
         </div>
-        <div class="field-row" style="display:flex; gap:10px; align-items:center;">
-          <label style="white-space:nowrap; min-width:70px;">偏移:</label>
-          <input type="number" data-k="vocal_audio_zero_bar" min="1" step="1" value="1" style="width:70px;">
-          <span>:</span>
-          <input type="number" data-k="vocal_audio_zero_beat" min="0.1" step="0.1" value="1" style="width:70px;">
+        <div class="field-row">
+          <label>交叉淡入淡出时长:</label>
+          <input type="number" class="ending-fade-dur" min="0.1" step="0.1" value="2.0" data-k="ending_fade_duration">
+          <span>秒</span>
+        </div>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：配置后播放器「跳出循环」按钮变为「收尾」，点击后整体混音淡出，收尾音频淡入，无缝衔接
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">🔄 完整循环（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="full_loop_enabled"> 启用完整循环切换
+      </label>
+      <div class="full-loop-panel" data-k="full_loop_panel" style="display:none; margin-top:12px;">
+        <div class="field-row">
+          <label>切换淡入淡出时长:</label>
+          <input type="number" class="full-loop-fade-dur" min="0.1" step="0.1" value="2.0" data-k="full_loop_fade_duration">
+          <span>秒</span>
+        </div>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：启用后播放器出现「完整循环」按钮，可在循环段与整首整曲循环之间交叉淡入淡出切换
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">🔔 循环提示音效（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="loop_sfx_enabled"> 启用循环提示音效
+      </label>
+      <div class="loop-sfx-panel" data-k="loop_sfx_panel" style="display:none; margin-top:12px;">
+        <div class="field">
+          <label>音效文件:</label>
+          <div class="file-picker">
+            <input type="search" class="loop-sfx-search" placeholder="🔍 过滤文件…">
+            <select class="loop-sfx-select" size="5" data-k="loop_sfx_filename"></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <label>预淡入节拍数:</label>
+          <input type="number" class="loop-sfx-fade-beats" min="1" max="32" value="4" data-k="loop_sfx_fade_in_beats">
+          <span>拍</span>
+        </div>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：切入循环点时先播放音效，再从循环起点前指定节拍数开始淡入，实现更流畅的切换
         </div>
       </div>
     </div>
@@ -1052,6 +1145,360 @@ function renderTrackCard(t, index) {
     });
     renderStyles();
     markDirty(card);
+  });
+
+  // --- 多轨道混音 ---
+  const extraTracksEnabledCheck = card.querySelector('input[data-k="extra_tracks_enabled"]');
+  const extraTracksPanel = card.querySelector('[data-k="extra_tracks_panel"]');
+  if (extraTracksEnabledCheck) {
+    extraTracksEnabledCheck.checked = !!t.extra_tracks_enabled;
+    extraTracksPanel.style.display = t.extra_tracks_enabled ? '' : 'none';
+    extraTracksEnabledCheck.addEventListener('change', () => {
+      t.extra_tracks_enabled = extraTracksEnabledCheck.checked;
+      extraTracksPanel.style.display = t.extra_tracks_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+
+  const renderExtraTracks = () => {
+    const listEl = card.querySelector('[data-k="extra_tracks_list"]');
+    if (!listEl) return;
+    t.extra_tracks = t.extra_tracks || [];
+    listEl.innerHTML = '';
+    if (t.extra_tracks.length === 0) {
+      listEl.innerHTML = '<div class="tc-empty-hint">暂无额外轨道，点击下方按钮新增</div>';
+      return;
+    }
+    t.extra_tracks.forEach((et, idx) => {
+      const row = document.createElement('div');
+      row.className = 'extra-track-row';
+      const azb = et.audio_zero_bar != null ? et.audio_zero_bar : t.audio_zero_bar || 1;
+      const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : t.audio_zero_beat || 1;
+      row.innerHTML = `
+        <div class="extra-track-head">
+          <span class="tc-idx-badge">${idx + 1}</span>
+          <input type="text" class="et-name" placeholder="轨道名称（如：人声轨、合唱轨）" value="${escapeHtml(et.name || '')}">
+          <div class="et-actions">
+            <button class="btn btn-icon et-up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button class="btn btn-icon et-down" title="下移" ${idx === t.extra_tracks.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="btn btn-icon btn-danger et-del" title="删除">🗑</button>
+          </div>
+        </div>
+        <div class="extra-track-body">
+          <div class="field" style="margin-bottom:6px;">
+            <label>音频文件 <span class="hint">(可搜索过滤)</span></label>
+            <div class="file-picker">
+              <input type="search" class="et-file-search" placeholder="🔍 按文件名过滤…">
+              <select class="et-file-select" size="5" data-et-idx="${idx}"></select>
+            </div>
+          </div>
+          <div class="field-row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <label style="white-space:nowrap; min-width:60px;">偏移:</label>
+            <input type="number" class="et-azb" min="1" step="1" value="${azb}" style="width:65px;">
+            <span>:</span>
+            <input type="number" class="et-azbt" min="0.1" step="0.1" value="${azbt}" style="width:65px;">
+            <label style="margin-left:10px; white-space:nowrap;">音量:</label>
+            <input type="number" class="et-volume" min="0" max="2" step="0.01" value="${et.volume != null ? et.volume : 1}" style="width:65px;">
+            <span class="hint">0~2 (默认1)</span>
+          </div>
+        </div>
+      `;
+
+      row.querySelector('.et-name').addEventListener('input', (e) => {
+        et.name = e.target.value;
+        markDirty(card);
+      });
+      row.querySelector('.et-azb').addEventListener('input', (e) => {
+        et.audio_zero_bar = parseInt(e.target.value) || 1;
+        markDirty(card);
+      });
+      row.querySelector('.et-azbt').addEventListener('input', (e) => {
+        et.audio_zero_beat = parseFloat(e.target.value) || 1;
+        markDirty(card);
+      });
+      row.querySelector('.et-volume').addEventListener('input', (e) => {
+        et.volume = Math.max(0, Math.min(2, parseFloat(e.target.value) || 0));
+        markDirty(card);
+      });
+
+      const fileSearch = row.querySelector('.et-file-search');
+      const fileSelect = row.querySelector('.et-file-select');
+
+      const renderEtFileOptions = (searchQuery = '') => {
+        const curDirId = t.bgm_dir_id || 'default';
+        const curFn = et.filename || '';
+        let filesInDir = state.bgmList.filter(e => e.dir_id === curDirId);
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          filesInDir = filesInDir.filter(e => (e.filename || '').toLowerCase().includes(q));
+        }
+        let html = '';
+        html += `<option value="">— 未选择音频 —</option>`;
+        filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+          const sel = e.filename === curFn ? 'selected' : '';
+          html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" data-dir="${escapeHtml(e.dir_id)}" data-fn="${escapeHtml(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+        });
+        if (filesInDir.length === 0) {
+          html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+        }
+        fileSelect.innerHTML = html;
+        if (curFn) {
+          const need = encodeURIComponent(curDirId) + '::' + encodeURIComponent(curFn);
+          if (fileSelect.value !== need) {
+            if (Array.from(fileSelect.options).some(o => o.value === need)) {
+              fileSelect.value = need;
+            } else {
+              const fake = document.createElement('option');
+              fake.value = need;
+              fake.selected = true;
+              fake.textContent = `⚠️ 当前：${curFn}`;
+              fileSelect.insertBefore(fake, fileSelect.firstChild.nextSibling);
+            }
+          }
+        }
+      };
+      renderEtFileOptions();
+
+      fileSearch.addEventListener('input', () => {
+        renderEtFileOptions(fileSearch.value);
+      });
+      fileSelect.addEventListener('change', () => {
+        const v = fileSelect.value;
+        if (!v) {
+          et.filename = '';
+          et.dir_id = t.bgm_dir_id || 'default';
+        } else {
+          const [encDir, encFn] = v.split('::');
+          et.dir_id = decodeURIComponent(encDir);
+          et.filename = decodeURIComponent(encFn);
+        }
+        markDirty(card);
+      });
+
+      row.querySelector('.et-up').addEventListener('click', () => {
+        if (idx <= 0) return;
+        [t.extra_tracks[idx - 1], t.extra_tracks[idx]] = [t.extra_tracks[idx], t.extra_tracks[idx - 1]];
+        renderExtraTracks();
+        markDirty(card);
+      });
+      row.querySelector('.et-down').addEventListener('click', () => {
+        if (idx >= t.extra_tracks.length - 1) return;
+        [t.extra_tracks[idx + 1], t.extra_tracks[idx]] = [t.extra_tracks[idx], t.extra_tracks[idx + 1]];
+        renderExtraTracks();
+        markDirty(card);
+      });
+      row.querySelector('.et-del').addEventListener('click', () => {
+        if (!confirm(`确定删除轨道 "${et.name || '未命名'}" 吗？`)) return;
+        t.extra_tracks.splice(idx, 1);
+        renderExtraTracks();
+        markDirty(card);
+      });
+
+      listEl.appendChild(row);
+    });
+  };
+  renderExtraTracks();
+
+  // 当主曲目目录改变时，刷新所有额外轨道的文件列表
+  const origDirChange = dirSelect.onchange || null;
+  dirSelect.addEventListener('change', () => {
+    renderExtraTracks();
+  });
+
+  card.querySelector('[data-act="add-extra-track"]').addEventListener('click', () => {
+    t.extra_tracks = t.extra_tracks || [];
+    t.extra_tracks.push({
+      name: `轨道 ${t.extra_tracks.length + 1}`,
+      filename: '',
+      dir_id: t.bgm_dir_id || 'default',
+      audio_zero_bar: t.audio_zero_bar || 1,
+      audio_zero_beat: t.audio_zero_beat || 1,
+      volume: 1.0
+    });
+    renderExtraTracks();
+    markDirty(card);
+  });
+
+  // --- 收尾音频 ---
+  const endingEnabledCheck = card.querySelector('input[data-k="ending_enabled"]');
+  const endingPanel = card.querySelector('[data-k="ending_panel"]');
+  if (endingEnabledCheck) {
+    endingEnabledCheck.checked = !!t.ending_enabled;
+    endingPanel.style.display = t.ending_enabled ? '' : 'none';
+    endingEnabledCheck.addEventListener('change', () => {
+      t.ending_enabled = endingEnabledCheck.checked;
+      endingPanel.style.display = t.ending_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+
+  const endingFileSearch = card.querySelector('.ending-file-search');
+  const endingFileSelect = card.querySelector('.ending-file-select');
+  const endingFadeDur = card.querySelector('.ending-fade-dur');
+
+  const renderEndingFileOptions = (searchQuery = '') => {
+    const curDirId = t.bgm_dir_id || 'default';
+    const curFn = t.ending_filename || '';
+    let filesInDir = state.bgmList.filter(e => e.dir_id === curDirId);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filesInDir = filesInDir.filter(e => (e.filename || '').toLowerCase().includes(q));
+    }
+    let html = '';
+    html += `<option value="">— 未选择收尾音频 —</option>`;
+    filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+      const sel = e.filename === curFn ? 'selected' : '';
+      html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+    });
+    if (filesInDir.length === 0) {
+      html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+    }
+    endingFileSelect.innerHTML = html;
+    if (curFn) {
+      const need = encodeURIComponent(curDirId) + '::' + encodeURIComponent(curFn);
+      if (endingFileSelect.value !== need) {
+        if (Array.from(endingFileSelect.options).some(o => o.value === need)) {
+          endingFileSelect.value = need;
+        } else {
+          const fake = document.createElement('option');
+          fake.value = need;
+          fake.selected = true;
+          fake.textContent = `⚠️ 当前：${curFn}`;
+          endingFileSelect.insertBefore(fake, endingFileSelect.firstChild.nextSibling);
+        }
+      }
+    }
+  };
+  renderEndingFileOptions();
+
+  endingFileSearch.addEventListener('input', () => {
+    renderEndingFileOptions(endingFileSearch.value);
+  });
+  endingFileSelect.addEventListener('change', () => {
+    const v = endingFileSelect.value;
+    if (!v) {
+      t.ending_filename = '';
+      t.ending_dir_id = t.bgm_dir_id || 'default';
+    } else {
+      const [encDir, encFn] = v.split('::');
+      t.ending_dir_id = decodeURIComponent(encDir);
+      t.ending_filename = decodeURIComponent(encFn);
+    }
+    markDirty(card);
+  });
+
+  if (endingFadeDur) {
+    endingFadeDur.value = t.ending_fade_duration != null ? t.ending_fade_duration : 2.0;
+    endingFadeDur.addEventListener('input', () => {
+      t.ending_fade_duration = Math.max(0.1, parseFloat(endingFadeDur.value) || 2.0);
+      markDirty(card);
+    });
+  }
+
+  // 主目录改变时刷新收尾文件列表
+  dirSelect.addEventListener('change', () => {
+    renderEndingFileOptions();
+  });
+
+  // --- 完整循环 ---
+  const fullLoopEnabledCheck = card.querySelector('input[data-k="full_loop_enabled"]');
+  const fullLoopPanel = card.querySelector('[data-k="full_loop_panel"]');
+  const fullLoopFadeDur = card.querySelector('.full-loop-fade-dur');
+  if (fullLoopEnabledCheck) {
+    fullLoopEnabledCheck.checked = !!t.full_loop_enabled;
+    fullLoopPanel.style.display = t.full_loop_enabled ? '' : 'none';
+    fullLoopEnabledCheck.addEventListener('change', () => {
+      t.full_loop_enabled = fullLoopEnabledCheck.checked;
+      fullLoopPanel.style.display = t.full_loop_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+  if (fullLoopFadeDur) {
+    fullLoopFadeDur.value = t.full_loop_fade_duration != null ? t.full_loop_fade_duration : 2.0;
+    fullLoopFadeDur.addEventListener('input', () => {
+      t.full_loop_fade_duration = Math.max(0.1, parseFloat(fullLoopFadeDur.value) || 2.0);
+      markDirty(card);
+    });
+  }
+
+  // --- 循环提示音效 ---
+  const loopSfxEnabledCheck = card.querySelector('input[data-k="loop_sfx_enabled"]');
+  const loopSfxPanel = card.querySelector('[data-k="loop_sfx_panel"]');
+  const loopSfxSelect = card.querySelector('.loop-sfx-select');
+  const loopSfxSearch = card.querySelector('.loop-sfx-search');
+  const loopSfxFadeBeats = card.querySelector('.loop-sfx-fade-beats');
+  if (loopSfxEnabledCheck) {
+    loopSfxEnabledCheck.checked = !!t.loop_sfx_enabled;
+    loopSfxPanel.style.display = t.loop_sfx_enabled ? '' : 'none';
+    loopSfxEnabledCheck.addEventListener('change', () => {
+      t.loop_sfx_enabled = loopSfxEnabledCheck.checked;
+      loopSfxPanel.style.display = t.loop_sfx_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+  if (loopSfxFadeBeats) {
+    loopSfxFadeBeats.value = t.loop_sfx_fade_in_beats != null ? t.loop_sfx_fade_in_beats : 4;
+    loopSfxFadeBeats.addEventListener('input', () => {
+      t.loop_sfx_fade_in_beats = Math.max(1, Math.min(32, parseInt(loopSfxFadeBeats.value) || 4));
+      markDirty(card);
+    });
+  }
+  const renderLoopSfxFileOptions = (searchQuery = '') => {
+    if (!loopSfxSelect) return;
+    const curDirId = t.bgm_dir_id || 'default';
+    const curFn = t.loop_sfx_filename || '';
+    let filesInDir = state.bgmList.filter(e => e.dir_id === curDirId);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filesInDir = filesInDir.filter(e => (e.filename || '').toLowerCase().includes(q));
+    }
+    let html = '';
+    html += `<option value="">— 未选择音效 —</option>`;
+    filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+      const sel = e.filename === curFn ? 'selected' : '';
+      html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+    });
+    if (filesInDir.length === 0) {
+      html += `<option disabled>— 当前目录暂无音频文件 —</option>`;
+    }
+    loopSfxSelect.innerHTML = html;
+    if (curFn) {
+      const need = encodeURIComponent(curDirId) + '::' + encodeURIComponent(curFn);
+      if (loopSfxSelect.value !== need) {
+        if (Array.from(loopSfxSelect.options).some(o => o.value === need)) {
+          loopSfxSelect.value = need;
+        } else {
+          const fake = document.createElement('option');
+          fake.value = need;
+          fake.selected = true;
+          fake.textContent = `⚠️ 当前：${curFn}`;
+          loopSfxSelect.insertBefore(fake, loopSfxSelect.firstChild.nextSibling);
+        }
+      }
+    }
+  };
+  if (loopSfxSelect) {
+    renderLoopSfxFileOptions();
+    loopSfxSelect.addEventListener('change', () => {
+      const v = loopSfxSelect.value;
+      if (!v) {
+        t.loop_sfx_filename = '';
+        t.loop_sfx_dir_id = '';
+      } else {
+        const [dPart, fPart] = v.split('::');
+        t.loop_sfx_dir_id = decodeURIComponent(dPart || '');
+        t.loop_sfx_filename = decodeURIComponent(fPart || '');
+      }
+      markDirty(card);
+    });
+  }
+  if (loopSfxSearch && loopSfxSelect) {
+    loopSfxSearch.addEventListener('input', () => {
+      renderLoopSfxFileOptions(loopSfxSearch.value);
+    });
+  }
+  dirSelect.addEventListener('change', () => {
+    renderLoopSfxFileOptions();
   });
 
   // 折叠 / 展开
