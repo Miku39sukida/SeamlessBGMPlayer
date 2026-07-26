@@ -63,7 +63,8 @@ DEFAULT_CONFIG = {
             "loop_sfx_fade_in_beats": 4,
             "intro_enabled": False,
             "intro_filename": "",
-            "intro_dir_id": ""
+            "intro_dir_id": "",
+            "gain": 1.0
         }
     ]
 }
@@ -194,6 +195,8 @@ def load_config():
             t['loop_sfx_dir_id'] = t.get('bgm_dir_id', 'default')
         if 'loop_sfx_fade_in_beats' not in t or t['loop_sfx_fade_in_beats'] is None:
             t['loop_sfx_fade_in_beats'] = 4
+        if 'gain' not in t or t['gain'] is None:
+            t['gain'] = 1.0
     return cfg
 
 def save_config_raw(cfg):
@@ -1158,21 +1161,6 @@ if __name__ == '__main__':
     print("  登录:   http://127.0.0.1:5001/login")
     print("  管理:   http://127.0.0.1:5001/admin")
     print("  默认密码: admin123  (可在 password.txt 中修改)")
-
-    # 生成 QR 码方便手机/其他设备扫码访问
-    if ips:
-        try:
-            import qrcode
-            url = f"http://{ips[0]}:5001/"
-            qr = qrcode.QRCode(border=1)
-            qr.add_data(url)
-            qr.make(fit=True)
-            print()
-            print(f"  扫码访问 {url}")
-            qr.print_ascii(invert=True)
-        except ImportError:
-            print("  提示: pip install qrcode 可生成扫码访问的二维码")
-
     print("=" * 60)
 
     app.run(host='0.0.0.0', port=5001, debug=False)
