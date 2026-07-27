@@ -3387,10 +3387,11 @@ const openLanModal = async () => {
     try {
         const r = await fetch('/api/lan_ips');
         const data = await r.json();
-        const ips = data.ips || [];
+        const wifi_ips = data.wifi_ips || [];
+        const hotspot_ips = data.hotspot_ips || [];
         const port = data.port || 5001;
 
-        if (ips.length === 0) {
+        if (wifi_ips.length === 0 && hotspot_ips.length === 0) {
             ipList.innerHTML = '<div class="lan-ip-item" style="cursor:default;">未检测到局域网 IP</div>';
             return;
         }
@@ -3398,23 +3399,47 @@ const openLanModal = async () => {
         ipList.innerHTML = '';
         let selectedUrl = null;
 
-        ips.forEach((ip, idx) => {
+        const createIpItem = (ip, label) => {
             const url = `http://${ip}:${port}/`;
             const item = document.createElement('div');
             item.className = 'lan-ip-item';
             item.dataset.url = url;
-            item.innerHTML = `<span class="ip-label">地址</span>${url}`;
+            item.innerHTML = `<span class="ip-label">${label}</span>${url}`;
             item.addEventListener('click', () => {
                 ipList.querySelectorAll('.lan-ip-item').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
                 generateLanQR(url);
             });
-            ipList.appendChild(item);
+            return { item, url };
+        };
 
-            if (idx === 0) {
-                selectedUrl = url;
-            }
-        });
+        if (wifi_ips.length > 0) {
+            const wifiHeader = document.createElement('div');
+            wifiHeader.className = 'lan-ip-group-header';
+            wifiHeader.textContent = '📶 WiFi';
+            ipList.appendChild(wifiHeader);
+            wifi_ips.forEach((ip, idx) => {
+                const { item, url } = createIpItem(ip, 'WiFi');
+                ipList.appendChild(item);
+                if (selectedUrl === null && idx === 0) {
+                    selectedUrl = url;
+                }
+            });
+        }
+
+        if (hotspot_ips.length > 0) {
+            const hotspotHeader = document.createElement('div');
+            hotspotHeader.className = 'lan-ip-group-header';
+            hotspotHeader.textContent = '📡 热点';
+            ipList.appendChild(hotspotHeader);
+            hotspot_ips.forEach((ip, idx) => {
+                const { item, url } = createIpItem(ip, '热点');
+                ipList.appendChild(item);
+                if (selectedUrl === null && idx === 0) {
+                    selectedUrl = url;
+                }
+            });
+        }
 
         if (selectedUrl) {
             const firstItem = ipList.querySelector('.lan-ip-item');
