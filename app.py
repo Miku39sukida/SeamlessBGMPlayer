@@ -1140,7 +1140,9 @@ def _get_lan_ips():
 @app.route('/api/lan_ips')
 def lan_ips():
     ips = _get_lan_ips()
-    return jsonify({"ips": ips, "port": 5001})
+    wifi_ips = [ip for ip in ips if ip.startswith('192.168.')]
+    hotspot_ips = [ip for ip in ips if not ip.startswith('192.168.')]
+    return jsonify({"ips": ips, "wifi_ips": wifi_ips, "hotspot_ips": hotspot_ips, "port": 5001})
 
 if __name__ == '__main__':
     os.makedirs(BGM_DIR, exist_ok=True)
@@ -1150,13 +1152,21 @@ if __name__ == '__main__':
     load_config()
 
     ips = _get_lan_ips()
+    wifi_ips = [ip for ip in ips if ip.startswith('192.168.')]
+    hotspot_ips = [ip for ip in ips if not ip.startswith('192.168.')]
 
     print("=" * 60)
     print("  无缝循环播放器启动")
-    if ips:
-        for ip in ips:
+    if wifi_ips:
+        print("  📶 WiFi:")
+        for ip in wifi_ips:
             url = f"http://{ip}:5001/"
-            print(f"  局域网: {url}")
+            print(f"         {url}")
+    if hotspot_ips:
+        print("  📡 热点:")
+        for ip in hotspot_ips:
+            url = f"http://{ip}:5001/"
+            print(f"         {url}")
     print("  本机:   http://127.0.0.1:5001/")
     print("  登录:   http://127.0.0.1:5001/login")
     print("  管理:   http://127.0.0.1:5001/admin")
