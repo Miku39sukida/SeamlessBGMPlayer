@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 
-window.DEBUG_AUDIO = true;
+window.DEBUG_AUDIO = false;
 const DLog = (...a) => { if (window.DEBUG_AUDIO) console.log('[AUDIO]', ...a); };
 
 let audioCtx = null;
@@ -1201,22 +1201,35 @@ const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
     return `<div class="lyric-main">${html}</div>`;
 };
 
+let _lastRenderedLyricKey = '';
+
 const setLyricText = (entry, currentSec, lineEndTime = null) => {
     const el = $('lyricText');
     if (!el) return;
-    
+
     let lyricText = '';
     let lyricTranslation = '';
-    
+
     if (!entry) {
-        el.innerHTML = '<span class="lyric-empty">暂无歌词</span>';
-        el.classList.toggle('is-empty', true);
+        if (_lastRenderedLyricKey !== '__null__') {
+            el.innerHTML = '<span class="lyric-empty">暂无歌词</span>';
+            el.classList.toggle('is-empty', true);
+            _lastRenderedLyricKey = '__null__';
+        }
     } else if (entry.is_empty) {
-        el.innerHTML = '<span class="lyric-empty-line"></span>';
-        el.classList.toggle('is-empty', true);
+        if (_lastRenderedLyricKey !== '__empty__') {
+            el.innerHTML = '<span class="lyric-empty-line"></span>';
+            el.classList.toggle('is-empty', true);
+            _lastRenderedLyricKey = '__empty__';
+        }
     } else {
-        el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
-        el.classList.toggle('is-empty', false);
+        const hasKaraoke = Array.isArray(entry.karaoke) && entry.karaoke.length > 0;
+        const lineKey = activeLyricIndex + ':' + (hasKaraoke ? currentSec.toFixed(2) : '0');
+        if (hasKaraoke || lineKey !== _lastRenderedLyricKey) {
+            el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
+            el.classList.toggle('is-empty', false);
+            _lastRenderedLyricKey = lineKey;
+        }
         lyricText = entry.text || '';
         lyricTranslation = entry.translation || '';
     }
@@ -2831,12 +2844,6 @@ const startUiTicker = () => {
     lastBeatIdx = -1;
     updateUi();
 };
-
-setInterval(() => {
-    if (currentTrack && activeTrackCfg) {
-        updateLyricDisplay();
-    }
-}, 16);
 
 const renderMarkers = () => {
     // 完整循环模式下，标记始终显示原始循环段位置

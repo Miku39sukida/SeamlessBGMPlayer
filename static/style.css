@@ -624,6 +624,8 @@ body.drawer-open .drawer-overlay {
 
 .lyric-scroll-item.active {
     opacity: 1;
+    color: var(--lyric-highlight-color, #66CCFF);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 30%, transparent);
 }
 
 .lyric-scroll-item.done {
@@ -1517,6 +1519,19 @@ body.drawer-open .drawer-overlay {
     color: var(--primary-dark, #d4608a);
     margin-right: 8px;
     font-family: inherit;
+}
+
+.lan-ip-group-header {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--primary-dark, #d4608a);
+    margin-top: 12px;
+    margin-bottom: 6px;
+    padding-left: 4px;
+}
+
+.lan-ip-group-header:first-child {
+    margin-top: 0;
 }
 
 .lan-tip {
