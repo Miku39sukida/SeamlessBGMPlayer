@@ -100,11 +100,6 @@
       "meter_changes": [],
       "multi_style_enabled": false,
       "styles": [],
-      "vocal_enabled": false,
-      "vocal_filename": "",
-      "vocal_dir_id": "",
-      "vocal_audio_zero_bar": 1,
-      "vocal_audio_zero_beat": 1,
       "extra_tracks_enabled": true,
       "extra_tracks": [
         {
