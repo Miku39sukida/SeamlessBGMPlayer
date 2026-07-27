@@ -1660,6 +1660,9 @@ function doConfigSearch(query) {
   });
 
   modal.style.display = '';
+  // 移动端：弹窗后让搜索框失焦，收起键盘
+  const searchInput = $('#configSearch');
+  if (searchInput) searchInput.blur();
 }
 
 function highlightMatch(text, matchIdx, query) {
