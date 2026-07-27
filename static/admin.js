@@ -1875,6 +1875,10 @@ async function init() {
     } catch (e) { setStatus('添加失败：' + e.message, 'err'); }
   });
 
+  $('#closeTabBtn').addEventListener('click', () => {
+    window.close();
+  });
+
   $('#logoutBtn').addEventListener('click', async () => {
     if (!confirm('确定退出登录吗？')) return;
     try {
