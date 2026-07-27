@@ -11,7 +11,6 @@
 <div class="admin-app">
   <header class="admin-header">
     <div class="left">
-      <a href="/" class="back-link">← 返回播放</a>
       <h1 class="title">⚙️ 配置管理</h1>
     </div>
     <div class="right">
@@ -24,8 +23,8 @@
     <div class="toolbar">
       <div class="track-count">共 <b id="trackCount">0</b> 首曲目 · <b id="dirCount">0</b> 个 BGM 目录</div>
       <div class="toolbar-actions">
-        <div class="search-box-wrap" title="全局 BGM 文件名搜索（刷新列表时应用）">
-          <input type="search" id="globalFileSearch" placeholder="🔍 搜索 BGM 文件名…">
+        <div class="search-box-wrap" title="搜索曲目配置（名称、文件名、分类等）">
+          <input type="search" id="configSearch" placeholder="🔍 搜索曲目配置…" autocomplete="off">
         </div>
         <button id="refreshBgmBtn" class="btn btn-small" title="重新扫描所有已存在目录">🔄 刷新文件列表</button>
     <button id="toggleDirPanelBtn" class="btn btn-small" style="background:linear-gradient(135deg,#9a7bff,#6e56d6);">📂 管理 BGM 目录</button>
@@ -318,6 +317,17 @@
 
 <div class="beat-tapper-minimized" id="beatTapperMinimized" style="display:none;">
   <button id="beatTapperRestore" class="beat-tapper-min-btn">🥁</button>
+</div>
+
+<!-- 搜索结果弹窗 -->
+<div class="search-results-modal" id="searchResultsModal" style="display:none;">
+  <div class="search-results-card">
+    <div class="search-results-header">
+      <span class="search-results-title">🔍 搜索结果</span>
+      <button class="search-results-close" id="searchResultsClose">✕</button>
+    </div>
+    <div class="search-results-body" id="searchResultsBody"></div>
+  </div>
 </div>
 
 <script src="/static/beat-utils.js"></script>
