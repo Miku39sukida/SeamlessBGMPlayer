@@ -1578,9 +1578,10 @@ function refreshTrackCount() {
   $('#trackCount').textContent = state.tracks.length;
 }
 function insertCardDOM(track, idx) {
+  const container = $('#tracksContainer');
+  const savedScrollTop = container ? container.scrollTop : 0;
   const newCard = renderTrackCard(track, idx);
   if (state.dirty) newCard.classList.add('dirty');
-  const container = $('#tracksContainer');
   const cards = $$('.track-card', container);
   if (idx >= cards.length) {
     container.appendChild(newCard);
@@ -1589,7 +1590,127 @@ function insertCardDOM(track, idx) {
   }
   updateIndicesFrom(idx);
   refreshTrackCount();
+  // 恢复滚动位置，防止插入新卡片时 select 渲染导致页面跳到顶部
+  if (container && savedScrollTop > 0) container.scrollTop = savedScrollTop;
   return newCard;
+}
+
+/* ============================ 配置搜索 ============================ */
+
+function doConfigSearch(query) {
+  query = (query || '').trim().toLowerCase();
+  const modal = $('#searchResultsModal');
+  const body = $('#searchResultsBody');
+  if (!modal || !body) return;
+
+  if (!query) { closeSearchResults(); return; }
+
+  // 搜索所有曲目的所有字符串/数字字段
+  const results = [];
+  state.tracks.forEach((t, i) => {
+    const matchFields = [];
+    for (const k in t) {
+      if (k.startsWith('_')) continue;
+      const v = t[k];
+      if (typeof v === 'string') {
+        const idx = v.toLowerCase().indexOf(query);
+        if (idx >= 0) matchFields.push({ key: k, value: v, idx });
+      } else if (typeof v === 'number') {
+        const s = String(v);
+        if (s.includes(query)) matchFields.push({ key: k, value: s, idx: s.indexOf(query) });
+      } else if (typeof v === 'boolean') {
+        const s = String(v);
+        if (s.includes(query)) matchFields.push({ key: k, value: s, idx: s.indexOf(query) });
+      }
+    }
+    if (matchFields.length > 0) {
+      results.push({ track: t, idx: i, fields: matchFields });
+    }
+  });
+
+  if (results.length === 0) {
+    body.innerHTML = `<div class="search-result-empty">没有找到匹配的配置</div>`;
+    modal.style.display = '';
+    return;
+  }
+
+  body.innerHTML = results.map(r => {
+    const name = r.track.name || '(未命名)';
+    const cat = r.track.category || '';
+    const firstMatch = r.fields[0];
+    const hl = highlightMatch(firstMatch.value, firstMatch.idx, query);
+    const otherCount = r.fields.length - 1;
+    const meta = `${firstMatch.key}: ${hl}${otherCount > 0 ? ` (+${otherCount} 其他匹配)` : ''}${cat ? ' · ' + cat : ''}`;
+    return `<div class="search-result-item" data-track-idx="${r.idx}">
+      <div class="search-result-idx">${r.idx + 1}</div>
+      <div class="search-result-info">
+        <div class="search-result-name">${escapeHtml(name)}</div>
+        <div class="search-result-meta">${meta}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 点击跳转
+  $$('.search-result-item', body).forEach(item => {
+    item.addEventListener('click', () => {
+      const idx = parseInt(item.dataset.trackIdx);
+      jumpToTrackByIndex(idx);
+      closeSearchResults();
+    });
+  });
+
+  modal.style.display = '';
+}
+
+function highlightMatch(text, matchIdx, query) {
+  if (matchIdx < 0) return escapeHtml(text.length > 60 ? text.substring(0, 60) + '...' : text);
+  const start = Math.max(0, matchIdx - 20);
+  const end = Math.min(text.length, matchIdx + query.length + 30);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < text.length ? '...' : '';
+  const before = escapeHtml(text.substring(start, matchIdx));
+  const match = escapeHtml(text.substring(matchIdx, matchIdx + query.length));
+  const after = escapeHtml(text.substring(matchIdx + query.length, end));
+  return prefix + before + `<span class="search-result-highlight">${match}</span>` + after + suffix;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function jumpToTrackByIndex(trackIdx) {
+  if (trackIdx < 0 || trackIdx >= state.tracks.length) return;
+
+  const container = $('#tracksContainer');
+  if (!container) return;
+  const cards = $$('.track-card', container);
+  const target = cards[trackIdx];
+  if (!target) return;
+
+  // 延迟滚动，等待弹窗关闭后再定位
+  setTimeout(() => {
+    const container2 = $('#tracksContainer');
+    if (!container2) return;
+    const allCards = $$('.track-card', container2);
+    const card = allCards[trackIdx];
+    if (card) {
+      const cardTop = card.offsetTop;
+      const cardHeight = card.offsetHeight;
+      const containerHeight = container2.clientHeight;
+      container2.scrollTo({
+        top: cardTop - containerHeight / 2 + cardHeight / 2,
+        behavior: 'smooth'
+      });
+      card.style.transition = 'box-shadow 0.3s';
+      card.style.boxShadow = '0 0 0 3px rgba(180,111,199,0.4)';
+      setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+    }
+  }, 100);
+}
+
+function closeSearchResults() {
+  const modal = $('#searchResultsModal');
+  if (modal) modal.style.display = 'none';
 }
 
 function markDirty(card) {
@@ -1709,33 +1830,30 @@ async function init() {
   });
 
   $('#refreshBgmBtn').addEventListener('click', async () => {
-    const s = $('#globalFileSearch').value;
     setStatus('🔄 重新扫描所有 BGM 目录…', 'info');
     try {
       await apiBgmDirs('scan_all', {});
-      const data = await refreshBgmList(s);
+      const data = await refreshBgmList('');
       state.bgmList = data.files || [];
       state.bgmDirs = data.dirs || [];
       renderDirPanel();
       $$('.track-card select.file-select').forEach(renderSelectOptionsForOne);
-      setStatus(`✅ 刷新完成，共 ${state.bgmList.length} 个文件 ${s ? `（已应用搜索 "${s}"）` : ''}`, 'ok');
+      setStatus(`✅ 刷新完成，共 ${state.bgmList.length} 个文件`, 'ok');
     } catch (e) { setStatus('刷新失败：' + e.message, 'err'); }
   });
 
-  $('#globalFileSearch').addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const s = e.target.value;
-      try {
-        setStatus(`🔍 搜索："${s}"`, 'info');
-        await refreshBgmList(s);
-        renderDirPanel();
-        $$('.track-card select.file-select').forEach(renderSelectOptionsForOne);
-        $$('.track-card select.vocal-file-select').forEach(s => { if (s._render) s._render(); });
-        setStatus(`✅ 搜索完成：共匹配 ${state.bgmList.length} 个文件`, 'ok');
-      } catch (err) { setStatus('搜索失败：' + err.message, 'err'); }
-    }
-  });
+  // 配置搜索：按回车后弹窗显示结果
+  const configSearchInput = $('#configSearch');
+  if (configSearchInput) {
+    configSearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closeSearchResults(); e.target.blur(); }
+      else if (e.key === 'Enter') { e.preventDefault(); doConfigSearch(e.target.value); }
+    });
+  }
+  const searchCloseBtn = $('#searchResultsClose');
+  if (searchCloseBtn) searchCloseBtn.addEventListener('click', closeSearchResults);
+  const searchModal = $('#searchResultsModal');
+  if (searchModal) searchModal.addEventListener('click', (e) => { if (e.target === searchModal) closeSearchResults(); });
 
   $('#addDirBtn').addEventListener('click', async () => {
     const label = ($('#newDirLabel').value || '').trim();

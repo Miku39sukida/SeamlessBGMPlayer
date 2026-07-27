@@ -2317,6 +2317,87 @@ const toggleFullLoop = () => {
 
     const origLoopStart = window._savedLoopParams ? window._savedLoopParams.loopStartS : loopStartS;
     const origLoopEnd = window._savedLoopParams ? window._savedLoopParams.loopEndS : loopEndS;
+    const origFadeIn = window._savedLoopParams ? window._savedLoopParams.fadeInS : fadeInS;
+    const origFadeOut = window._savedLoopParams ? window._savedLoopParams.fadeOutS : fadeOutS;
+
+    const inLoopSeg = curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01;
+
+    // ========== 在循环段范围内：直接改循环参数，不换轨道 ==========
+    if (inLoopSeg) {
+        loopStartS = origLoopStart;
+        loopEndS = origLoopEnd;
+        loopDurS = loopEndS - loopStartS;
+        fadeInS = origFadeIn;
+        fadeOutS = origFadeOut;
+        window._savedLoopParams = null;
+
+        // 单轨模式：改当前轨道的 loop 属性
+        if (!multiStyleMode) {
+            [currentTrack, nextTrack].forEach(tk => {
+                if (tk && tk.source) {
+                    try {
+                        tk.source.loopStart = loopStartS;
+                        tk.source.loopEnd = loopEndS;
+                    } catch(_) {}
+                }
+            });
+        } else {
+            // 多风格模式：改每个风格的轨道 loop 属性
+            for (const sIdx in styleTracks) {
+                const entry = styleTracks[sIdx];
+                if (!entry) continue;
+                const offsetDiff = entry.offsetDiff || 0;
+                const sLoopStart = Math.max(0, loopStartS + offsetDiff);
+                const sLoopEnd = Math.max(sLoopStart + 0.01, loopEndS + offsetDiff);
+                entry.loopStartS = sLoopStart;
+                entry.loopEndS = sLoopEnd;
+                [entry.current, entry.next].forEach(tk => {
+                    if (tk && tk.source) {
+                        try {
+                            tk.source.loopStart = sLoopStart;
+                            tk.source.loopEnd = sLoopEnd;
+                        } catch(_) {}
+                    }
+                });
+            }
+        }
+
+        // 额外轨道：改 loop 属性
+        if (extraTracksEnabled && extraTracks.length > 0) {
+            const timePerBeat = 60.0 / activeTrackCfg.bpm;
+            const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
+            extraTracks.forEach(et => {
+                if (!et.buffer || !et.gain || !et.track) return;
+                const azb = et.audio_zero_bar != null ? et.audio_zero_bar : activeTrackCfg.audio_zero_bar || 1;
+                const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
+                const zOffset = ((azb - 1) * (activeTrackCfg.beats_per_bar || 4) + (azbt - 1)) * timePerBeat;
+                const offsetDiff = defZeroOffset - zOffset;
+                const etLoopStart = Math.max(0, loopStartS + offsetDiff);
+                const etLoopEnd = Math.max(etLoopStart + 0.01, loopEndS + offsetDiff);
+                [et.track, et.nextTrack].forEach(tk => {
+                    if (tk && tk.source) {
+                        try {
+                            tk.source.loopStart = etLoopStart;
+                            tk.source.loopEnd = etLoopEnd;
+                        } catch(_) {}
+                    }
+                });
+            });
+        }
+
+        isFullLoopMode = false;
+        fullLoopSwitching = false;
+
+        const flBtn = $('fullLoopBtn');
+        if (flBtn) flBtn.textContent = '🔄 完整循环';
+
+        clearTimeout(loopSchedulerTimer);
+        loopSchedulerTimer = null;
+        scheduleNextLoop();
+
+        DLog('toggleFullLoop: back to segment loop (in range, no track change)');
+        return;
+    }
 
     // 循环提示音效：计算预淡入起点
     let fadeInStartOffset = origLoopStart;
@@ -2329,26 +2410,15 @@ const toggleFullLoop = () => {
         sfxFadeDur = fadeInSec;
     }
 
-    // 判断是否需要交叉淡入淡出
-    let needFade = false;
-    let targetStartOffset = curRaw;
-
-    const inLoopSeg = curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01;
-    if (inLoopSeg) {
-        needFade = false;
-        targetStartOffset = curRaw;
-    } else {
-        needFade = true;
-        targetStartOffset = fadeInStartOffset;
-    }
-
-    const fadeDur = needFade ? sfxFadeDur : 0.02;
+    // 范围外：交叉淡入淡出切换
+    const targetStartOffset = fadeInStartOffset;
+    const fadeDur = sfxFadeDur;
     const now = audioCtx.currentTime + 0.02;
 
     // 先淡出1秒，然后新轨道+音效同时开始淡入
     const FADE_OUT_DUR = 1.0;
     const fadeOutEndAt = now + FADE_OUT_DUR;
-    const fadeInStartAt = needFade ? fadeOutEndAt : now;
+    const fadeInStartAt = fadeOutEndAt;
     const fadeEndAt = fadeInStartAt + fadeDur;
 
     // 目标循环范围（主轨视角）
@@ -2356,7 +2426,7 @@ const toggleFullLoop = () => {
     const targetLoopEnd = origLoopEnd;
 
     // 播放循环提示音效（与新轨道同时开始，即淡出完成后）
-    if (needFade && loopSfxEnabled && loopSfxBuffer) {
+    if (loopSfxEnabled && loopSfxBuffer) {
         if (!loopSfxGain) {
             loopSfxGain = audioCtx.createGain();
             loopSfxGain.gain.value = 1.0;
@@ -2381,8 +2451,6 @@ const toggleFullLoop = () => {
         } catch(_) {}
     };
 
-    const startGain = needFade ? 0.0 : 1.0;
-
     // 1. 主轨 / 多风格轨道切换
     let newMainTrack = null;
     let newNextTrack = null;
@@ -2397,25 +2465,18 @@ const toggleFullLoop = () => {
             const offsetDiff = entry.offsetDiff || 0;
             const sLoopStart = Math.max(0, targetLoopStart + offsetDiff);
             const sLoopEnd = Math.max(sLoopStart + 0.01, targetLoopEnd + offsetDiff);
-
-            let sStartOffset;
-            if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
-                const sCurRaw = entry.current ? getRawPlaybackPos(entry.current) : (targetStartOffset + offsetDiff);
-                sStartOffset = Math.max(0, sCurRaw);
-            } else {
-                sStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
-            }
+            const sStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
 
             const trackA = createTrack(`full-fl-${sIdx}-A`);
             const trackB = createTrack(`full-fl-${sIdx}-B`);
             const ok = playSegmentAt(trackA, sStartOffset, fadeInStartAt, {
                 enableLoop: false,
-                initialGain: 1.0,
+                initialGain: 0.0,
                 buffer: entry.buffer,
                 connectTo: entry.styleGain,
             });
 
-            if (ok && needFade) {
+            if (ok) {
                 try {
                     trackA.gain.gain.cancelScheduledValues(fadeInStartAt);
                     trackA.gain.gain.setValueAtTime(0.0, fadeInStartAt);
@@ -2448,14 +2509,14 @@ const toggleFullLoop = () => {
         newNextTrack = createTrack('seg-main-b');
         const ok = playSegmentAt(newMainTrack, targetStartOffset, fadeInStartAt, {
             enableLoop: true,
-            initialGain: startGain,
+            initialGain: 0.0,
             buffer: audioBuffer,
             connectTo: masterGain,
             loopStart: targetLoopStart,
             loopEnd: targetLoopEnd,
         });
 
-        if (ok && needFade) {
+        if (ok) {
             try {
                 newMainTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
                 newMainTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
@@ -2482,28 +2543,21 @@ const toggleFullLoop = () => {
             const azbt = et.audio_zero_beat != null ? et.audio_zero_beat : activeTrackCfg.audio_zero_beat || 1;
             const zOffset = ((azb - 1) * (activeTrackCfg.beats_per_bar || 4) + (azbt - 1)) * timePerBeat;
             const offsetDiff = defZeroOffset - zOffset;
-
-            let etStartOffset;
-            if (curRaw >= origLoopStart - 0.01 && curRaw <= origLoopEnd + 0.01) {
-                const etCurRaw = et.track ? getRawPlaybackPos(et.track) : (targetStartOffset + offsetDiff);
-                etStartOffset = Math.max(0, etCurRaw);
-            } else {
-                etStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
-            }
+            const etStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
 
             const etTargetGain = et.muted ? 0.0 : 1.0;
 
             const newEtTrack = createTrack(`seg-et-${etIdx}`);
             const etok = playSegmentAt(newEtTrack, etStartOffset, fadeInStartAt, {
                 enableLoop: true,
-                initialGain: needFade ? 0.0 : etTargetGain,
+                initialGain: 0.0,
                 buffer: et.buffer,
                 connectTo: et.gain,
                 loopStart: Math.max(0, targetLoopStart + offsetDiff),
                 loopEnd: Math.max(0.01, targetLoopEnd + offsetDiff),
             });
 
-            if (etok && needFade) {
+            if (etok) {
                 try {
                     newEtTrack.gain.gain.cancelScheduledValues(fadeInStartAt);
                     newEtTrack.gain.gain.setValueAtTime(0.0, fadeInStartAt);
@@ -2521,6 +2575,14 @@ const toggleFullLoop = () => {
         });
     }
 
+    // 3. 恢复原始循环参数
+    loopStartS = origLoopStart;
+    loopEndS = origLoopEnd;
+    loopDurS = loopEndS - loopStartS;
+    fadeInS = origFadeIn;
+    fadeOutS = origFadeOut;
+    window._savedLoopParams = null;
+
     // 4. 更新按钮状态
     const flBtn = $('fullLoopBtn');
     if (flBtn) {
@@ -2529,7 +2591,7 @@ const toggleFullLoop = () => {
     }
 
     // 5. 切换完成后替换并清理（淡出1秒 + 淡入fadeDur秒）
-    const totalWaitMs = needFade ? (FADE_OUT_DUR + fadeDur) * 1000 + 50 : 100;
+    const totalWaitMs = (FADE_OUT_DUR + fadeDur) * 1000 + 50;
     setTimeout(() => {
         if (multiStyleMode) {
             // 清理旧风格轨道
@@ -2578,16 +2640,6 @@ const toggleFullLoop = () => {
             extraTracks = newExtraTracks;
         }
 
-        // 恢复原始循环参数
-        if (window._savedLoopParams) {
-            loopStartS = window._savedLoopParams.loopStartS;
-            loopEndS = window._savedLoopParams.loopEndS;
-            loopDurS = window._savedLoopParams.loopDurS;
-            fadeInS = window._savedLoopParams.fadeInS;
-            fadeOutS = window._savedLoopParams.fadeOutS;
-            window._savedLoopParams = null;
-        }
-
         isFullLoopMode = false;
         fullLoopSwitching = false;
 
@@ -2601,7 +2653,7 @@ const toggleFullLoop = () => {
         loopSchedulerTimer = null;
         scheduleNextLoop();
 
-        DLog(`toggleFullLoop: COMPLETE (mode=segment, fade=${needFade ? 'yes' : 'no'}, fadeOut=${FADE_OUT_DUR}s, fadeIn=${fadeDur.toFixed(2)}s, multiStyle=${multiStyleMode})`);
+        DLog(`toggleFullLoop: COMPLETE (mode=segment, crossfade, fadeOut=${FADE_OUT_DUR}s, fadeIn=${fadeDur.toFixed(2)}s, multiStyle=${multiStyleMode})`);
     }, totalWaitMs);
 };
 
@@ -3406,7 +3458,7 @@ const init = async () => {
     });
 
     $('addBtn').addEventListener('click', () => {
-        window.location.href = '/admin';
+        window.open('/admin', '_blank');
     });
 
     // --- Drawer (mobile) wiring ---
