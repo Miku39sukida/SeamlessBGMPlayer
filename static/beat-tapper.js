@@ -67,6 +67,7 @@ class BeatTapper {
         $bt('#beatTapperExportCfg').addEventListener('click', () => this.exportConfig());
         $bt('#beatTapperImportCfg').addEventListener('click', () => this.importConfig());
         $bt('#beatTapperLoadFromTrack').addEventListener('click', () => this.loadFromTrack());
+        $bt('#beatTapperLoadLyric').addEventListener('click', () => this.loadLyric());
 
         $bt('.beat-tapper-rhythm-types').addEventListener('click', (e) => {
             if (e.target.classList.contains('beat-tapper-rhythm-btn')) {
@@ -880,6 +881,64 @@ class BeatTapper {
             .catch(() => {
                 $bt('#beatTapperStatus').textContent = '❌ 载入失败';
             });
+    }
+
+    async loadLyric() {
+        const filename = $bt('#beatTapperFile').value;
+        const dirId = $bt('#beatTapperDir').value;
+        if (!filename) {
+            this.setStatus('❌ 请先选择音频文件');
+            return;
+        }
+
+        const editor = $bt('#beatTapperEditor');
+        if (editor.value.trim() && !confirm('编辑器中已有内容，载入将覆盖。是否继续？')) {
+            return;
+        }
+
+        try {
+            this.setStatus('正在载入歌词...');
+            const resp = await fetch('/api/get-raw-lyric', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ filename, dir_id: dirId })
+            });
+            const data = await resp.json();
+
+            if (!data.ok) {
+                this.setStatus('❌ 载入失败: ' + (data.error || '未知错误'));
+                return;
+            }
+
+            const { content, format } = data.data;
+            if (!content || !format) {
+                this.setStatus('⚠️ 未找到歌词文件（同名 .brc 或 .lrc）');
+                return;
+            }
+
+            if (format === 'brc') {
+                // BRC：保留原有节拍标签，直接载入方便调整
+                editor.value = content;
+                this.setStatus(`✅ 已载入 BRC 歌词（保留原有节拍标签）`);
+            } else if (format === 'lrc') {
+                // LRC：移除时间轴 [mm:ss.xx]，仅保留歌词文本
+                const lines = content.split('\n');
+                const stripped = lines.map(line => {
+                    // 移除所有 [mm:ss.xx] 或 [mm:ss] 时间标签
+                    return line.replace(/\[\d{1,2}:\d{1,2}(?:\.\d{1,3})?\]/g, '');
+                });
+                editor.value = stripped.join('\n');
+                this.setStatus(`✅ 已载入 LRC 歌词（已移除时间轴，共 ${stripped.length} 行）`);
+            } else {
+                editor.value = content;
+                this.setStatus(`✅ 已载入歌词文件（.${format}）`);
+            }
+
+            this.updateTapCount();
+        } catch (e) {
+            this.setStatus('❌ 载入失败: ' + e.message);
+        }
     }
 }
 
