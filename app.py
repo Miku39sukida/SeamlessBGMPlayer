@@ -954,6 +954,33 @@ def get_lyrics():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route('/api/get-raw-lyric', methods=['POST'])
+@login_required
+def get_raw_lyric():
+    """返回与音频同名的原始歌词文件内容（不解析），用于节奏打点载入。
+    优先级：.brc > .lrc。返回 format 字段标识文件类型。"""
+    data = request.get_json(silent=True) or {}
+    filename = data.get('filename')
+    dir_id = data.get('dir_id') or ''
+
+    if not filename:
+        return jsonify({"ok": False, "error": "缺少文件名"}), 400
+
+    full_path = resolve_lrc_file(filename, dir_id=dir_id or None)
+    if not full_path or not os.path.isfile(full_path):
+        return jsonify({"ok": True, "data": {"content": "", "format": None}})
+
+    _, ext = os.path.splitext(full_path)
+    fmt = ext.lower().lstrip('.')
+
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
+            content = fh.read()
+        return jsonify({"ok": True, "data": {"content": content, "format": fmt}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route('/api/save-brc', methods=['POST'])
 @login_required
 def save_brc():
