@@ -15,6 +15,8 @@ let nextTrack = null;
 let loopSchedulerTimer = null;
 let rafId = null;
 let config = { tracks: [] };
+// 移动端检测：移动浏览器切后台时 setTimeout 会被节流到 1 秒
+const IS_MOBILE_DEVICE = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 let activeTrackCfg = null;
 let beatsPerSec = 0;
 let beatSec = 0;
@@ -317,6 +319,16 @@ const getRawPlaybackPos = (track) => {
 
 const scheduleNextLoop = () => {
     if (!currentTrack || !audioCtx) return;
+    // 原生循环模式（移动端）：source.loop = true 时由 Web Audio API 音频线程
+    // 自行处理循环，完全不依赖 setTimeout，免疫后台节流
+    if (currentTrack.source && currentTrack.source.loop) {
+        // 同步最新循环点到 source（用户可能调整了循环设置）
+        try {
+            currentTrack.source.loopStart = loopStartS;
+            currentTrack.source.loopEnd = loopEndS;
+        } catch(_) {}
+        return;
+    }
     clearTimeout(loopSchedulerTimer);
 
     const now = audioCtx.currentTime;
@@ -368,7 +380,12 @@ const scheduleNextLoop = () => {
     }
     if (distToEnd < 0.002) distToEnd = 0.002;
 
-    const lookAhead = fadeOutS > 0.0002 ? Math.max(0.18, fadeOutS + 0.1) : 0.18;
+    // 移动端切后台时 setTimeout 会被节流到 1 秒，需要更大的 lookAhead 留出余量。
+    // 桌面端保持 180ms（无节流问题，更紧凑的调度）。
+    // doSingleJump 被提前调用是安全的：它用 audioCtx.currentTime 精确调度新音频源，
+    // transition 逻辑保证 UI 时间轴正确，旧音频源的淡出仍在对的时间点发生。
+    const baseLookAhead = IS_MOBILE_DEVICE ? 1.5 : 0.18;
+    const lookAhead = fadeOutS > 0.0002 ? Math.max(baseLookAhead, fadeOutS + 0.1) : baseLookAhead;
     let triggerDelayMs = (distToEnd - lookAhead) * 1000;
     if (nearAudioEnd || distToEnd <= lookAhead + 0.001) triggerDelayMs = 1;
     if (triggerDelayMs < 1) triggerDelayMs = 1;
@@ -1207,9 +1224,6 @@ const setLyricText = (entry, currentSec, lineEndTime = null) => {
     const el = $('lyricText');
     if (!el) return;
 
-    let lyricText = '';
-    let lyricTranslation = '';
-
     if (!entry) {
         if (_lastRenderedLyricKey !== '__null__') {
             el.innerHTML = '<span class="lyric-empty">暂无歌词</span>';
@@ -1230,26 +1244,9 @@ const setLyricText = (entry, currentSec, lineEndTime = null) => {
             el.classList.toggle('is-empty', false);
             _lastRenderedLyricKey = lineKey;
         }
-        lyricText = entry.text || '';
-        lyricTranslation = entry.translation || '';
     }
-    
-    if (window.electronAPI && window.electronAPI.updateDesktopLyric) {
-        const now = performance.now();
-        const lineChanged = activeLyricIndex !== lastDesktopLyricLineIdx;
-        const timeSyncNeeded = now - lastDesktopLyricSendTs > 500;
-        if (lineChanged || timeSyncNeeded) {
-            window.electronAPI.updateDesktopLyric({
-                text: lyricText,
-                translation: lyricTranslation,
-                karaoke: entry?.karaoke || [],
-                lineEndTime: lineEndTime,
-                currentTime: currentSec
-            });
-            lastDesktopLyricLineIdx = activeLyricIndex;
-            lastDesktopLyricSendTs = now;
-        }
-    }
+    // 桌面歌词由主进程 Node.js 定时器统一推送（绕过 Chromium 节流）
+    // 渲染端只负责同步音频时间，不再直接发送 updateDesktopLyric
 };
 
 const updateLyricDisplay = () => {
@@ -1314,6 +1311,7 @@ const loadLyrics = async (cfg, applyNow = true) => {
             }
             if (applyNow) {
                 lyricLines = loadedLines;
+                syncLyricCacheToMain();
                 if (lyricLines.length > 0) {
                     updateLyricDisplay();
                 } else {
@@ -1399,6 +1397,7 @@ const applyTrackCfg = (cfg) => {
     }
     const fosLabel = fadeOutAuto ? 'auto→loopEnd' : `${fosBar}:${fosBeat}`;
     DLog(`  fadeIn=${(fadeInS*1000).toFixed(0)}ms (from loopStart) fadeOut=${(fadeOutS*1000).toFixed(0)}ms (fos=${fosLabel} abs=${fadeOutStartS.toFixed(3)}s)`);
+    syncLyricCacheToMain();
 };
 
 const playTrack = async (idx) => {
@@ -1572,6 +1571,7 @@ const playTrack = async (idx) => {
         
         // 应用歌词（此时才更新UI）
         lyricLines = loadedLyricLines || [];
+        syncLyricCacheToMain();
         activeLyricIndex = -1;
         lastDesktopLyricLineIdx = -1;
         
@@ -1802,9 +1802,20 @@ const playTrack = async (idx) => {
                 
                 DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
                 DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
-                
+
+                // 移动端简单循环：使用 Web Audio API 原生 source.loop = true
+                // 循环完全由音频渲染线程处理，不依赖 setTimeout，切后台零丢音
+                // 仅限单轨模式且无跳段/额外轨道/结尾/SFX（这些需要 setTimeout 触发副作用）
+                const useNativeLoop = IS_MOBILE_DEVICE
+                    && loopMode === 'single'
+                    && !jumpSegEnabled
+                    && !extraTracksEnabled
+                    && !endingEnabled
+                    && !loopSfxEnabled
+                    && loopDurS > 0.01;
+
                 const playSuccess = playSegmentAt(currentTrack, startS, now, {
-                    enableLoop: false,
+                    enableLoop: useNativeLoop,
                     initialGain,
                 });
                 
@@ -2093,6 +2104,7 @@ const switchStyle = (styleIdx) => {
             const newLyrics = await loadLyrics(styleCfg, false);
             if (currentStyleIdx !== styleIdx) return;
             lyricLines = newLyrics;
+            syncLyricCacheToMain();
             activeLyricIndex = -1;
             lastDesktopLyricLineIdx = -1;
             updateLyricDisplay();
@@ -2792,6 +2804,21 @@ const stopAll = async () => {
         audioCtx = null;
         masterGain = null;
     }
+
+    // 清空桌面歌词文本并停止后台推送
+    if (window.electronAPI && window.electronAPI.clearDesktopLyric) {
+        window.electronAPI.clearDesktopLyric();
+    } else if (window.electronAPI && window.electronAPI.updateDesktopLyric) {
+        window.electronAPI.updateDesktopLyric({
+            text: '',
+            translation: '',
+            karaoke: [],
+            lineEndTime: null,
+            currentTime: 0
+        });
+    }
+    // 清空歌词缓存
+    syncLyricCacheToMain();
 };
 
 
@@ -2823,6 +2850,15 @@ const updateUi = () => {
 
     updateLyricDisplay();
     updateLyricScrollList();
+
+    // 同步音频时间到主进程（主进程用此值 + 墙钟时间插值估算，60fps 推送桌面歌词）
+    // 即使窗口最小化后 rAF 被节流，主进程仍能根据最后一次同步值继续零延迟推送
+    if (window.electronAPI && window.electronAPI.syncPlaybackState) {
+        window.electronAPI.syncPlaybackState({
+            audioTime: s,
+            wallClock: Date.now()
+        });
+    }
 
     const beatIdx = Math.max(0, Math.min(3, Math.floor(bb.beat - 1)));
     if (beatIdx !== lastBeatIdx) {
@@ -3566,27 +3602,28 @@ const init = async () => {
 
 document.addEventListener('DOMContentLoaded', init);
 
+// 移动端切后台后 AudioContext 可能被系统挂起，返回前台时立即恢复
 document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        if (!desktopLyricHiddenTimer && window.electronAPI && window.electronAPI.updateDesktopLyric) {
-            desktopLyricHiddenTimer = setInterval(() => {
-                if (!lyricLines.length || !activeTrackCfg) return;
-                const s = currentPlaySec();
-                let idx = 0;
-                while (idx < lyricLines.length - 1 && lyricLines[idx + 1].time_sec <= s) idx += 1;
-                if (idx !== activeLyricIndex) activeLyricIndex = idx;
-                const line = lyricLines[idx] || lyricLines[0];
-                const nextLine = lyricLines[idx + 1];
-                const lineEndTime = nextLine ? nextLine.time_sec : null;
-                setLyricText(line || null, s, lineEndTime);
-            }, 500);
-        }
-    } else {
-        if (desktopLyricHiddenTimer) {
-            clearInterval(desktopLyricHiddenTimer);
-            desktopLyricHiddenTimer = null;
-        }
+    if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
     }
 });
+
+// 同步歌词数据到主进程（主进程据此自动启动/停止 60fps 推送）
+const syncLyricCacheToMain = () => {
+    if (window.electronAPI && window.electronAPI.cacheLyricData) {
+        window.electronAPI.cacheLyricData({
+            lines: lyricLines,
+            loopStartS: loopStartS,
+            loopDurS: loopDurS
+        });
+    }
+};
+
+// 注意：不再使用 visibilitychange 来切换推送模式。
+// backgroundThrottling: false 时 visibilitychange 不会触发（Electron 文档明确说明
+// "This also affects the Page Visibility API"）。
+// 主进程始终以 60fps 推送桌面歌词，渲染端通过 rAF 同步音频时间，
+// 主进程用墙钟时间插值估算，窗口最小化时也能零延迟推送。
 
 })();
