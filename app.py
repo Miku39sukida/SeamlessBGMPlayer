@@ -361,12 +361,19 @@ def parse_lrc_content(content):
         
         text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
         if not text:
-            # 只有时间标签没有文字的行（如 [8:1]），作为空行（间奏）处理
+            # 只有时间标签没有文字的行
+            # 检测是 LRC 时间 [mm:ss.xx] 还是 BRC 节拍 [bar:beat]
             for bar_str, beat_str in matches:
                 bar = int(bar_str)
                 beat = float(beat_str)
-                abs_beat = (bar - 1) * beats_per_bar + beat
-                time_sec = beat_to_sec(abs_beat)
+                # 如果分钟部分 >= 10，很可能是 LRC 时间戳（如 [00:12.34]）
+                # 如果分钟部分 < 10 且 beat < 10，可能是 BRC 节拍标签（如 [8:1]）
+                if bar >= 10 or ('.' in beat_str and bar >= 1):
+                    # LRC 时间戳格式
+                    time_sec = bar * 60 + beat
+                else:
+                    # BRC 节拍格式，跳过（LRC 解析器不处理节拍换算）
+                    continue
                 entries.append({
                     'time_sec': max(0, time_sec),
                     'text': '',
