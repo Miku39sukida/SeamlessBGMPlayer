@@ -25,6 +25,12 @@ let startS = 0;
 let loopStartS = 0;
 let loopEndS = 0;
 let loopDurS = 0;
+let lyricEndS = 0;       // 歌词结束时间（秒），0=同 loopEndS
+let effectiveLoopEndS = 0;  // 双轨模式下 = max(loopEndS, lyricEndS)
+let effectiveLoopDurS = 0;  // 双轨模式下 = effectiveLoopEndS - loopStartS
+let lyricGhostUntil = 0;     // 歌词幽灵期结束时间（audioCtx 秒），0=无幽灵期
+let lyricGhostFrom = 0;      // 幽灵期起始位置（秒）
+let lyricGhostStartCtx = 0;  // 幽灵期开始时的 audioCtx.currentTime
 let audioDurS = 0;
 let loopMode = 'single';
 let fadeInS = 0;
@@ -292,6 +298,19 @@ const playSegmentAt = (track, startOffsetSec, startAtCtx, opts = {}) => {
 const currentPlaySec = () => {
     if (!currentTrack || !currentTrack.source) return 0;
     const ctxNow = audioCtx.currentTime;
+
+    // 歌词幽灵期：从 switchAtCtx 开始，到 effectiveLoopEndS 对应时间结束
+    // 在 switchAtCtx 之前不触发幽灵期（避免负值导致位置倒退）
+    if (lyricGhostUntil > 0 && ctxNow >= lyricGhostStartCtx && ctxNow < lyricGhostUntil) {
+        const ghostElapsed = ctxNow - lyricGhostStartCtx;
+        const ghostPos = lyricGhostFrom + ghostElapsed;
+        // 达到 effectiveLoopEndS 后不再 ghost
+        if (ghostPos < effectiveLoopEndS) {
+            return ghostPos;
+        }
+        lyricGhostUntil = 0;  // 幽灵期结束
+    }
+
     if (ctxNow < currentTrack.startedAtCtx) {
         if (transitionBase != null && transitionStartTime != null) {
             return transitionBase + (ctxNow - transitionStartTime);
@@ -305,8 +324,13 @@ const currentPlaySec = () => {
     transitionBase = null;
     transitionStartTime = null;
     const raw = ctxNow - currentTrack.startedAtCtx + currentTrack.startOffset;
-    if (loopDurS > 0 && raw >= loopStartS) {
-        const into = (raw - loopStartS) % loopDurS;
+    // 始终用 effectiveLoopEndS 包裹（双轨模式且设置了歌词结束拍时）
+    // 这样歌词 54-57 始终可达，不会被循环截断
+    const useEffective = (loopMode === 'dual' && lyricEndS > loopEndS);
+    const wrapEnd = useEffective ? effectiveLoopEndS : loopEndS;
+    const wrapDur = useEffective ? effectiveLoopDurS : loopDurS;
+    if (wrapDur > 0 && raw >= loopStartS) {
+        const into = (raw - loopStartS) % wrapDur;
         return loopStartS + into;
     }
     return Math.max(0, raw);
@@ -337,6 +361,8 @@ const scheduleNextLoop = () => {
     let sLoopStart = loopStartS;
     let sLoopEnd = loopEndS;
     let sLoopDur = loopDurS;
+    // 音频调度始终使用 loopEndS/loopDurS —— 音频正常循环，不受歌词结束拍影响
+    // 歌词显示由 currentPlaySec() 的幽灵期机制独立处理
     let sDuration = audioDurS || 0;
     let sJumpStart = jumpSegStartS;
     let sJumpEnd = jumpSegEndS;
@@ -579,6 +605,7 @@ const doDualSwitchMultiStyle = () => {
         const sLoopStart = activeEntry.loopStartS || loopStartS;
         const sLoopEnd = activeEntry.loopEndS || loopEndS;
         const sLoopDur = Math.max(0.01, sLoopEnd - sLoopStart);
+        // 音频调度始终使用 loopEndS —— 歌词显示由幽灵期机制处理
 
         let remainingToEnd;
         let isFirst = false;
@@ -665,6 +692,15 @@ const doDualSwitchMultiStyle = () => {
         const ae = styleTracks[currentStyleIdx];
         currentTrack = ae.current;
         nextTrack = ae.next;
+        // 设置歌词幽灵期：以 switchAtCtx 为基准对齐，避免累积偏差
+        if (loopMode === 'dual' && lyricEndS > loopEndS) {
+            const ghostDuration = effectiveLoopEndS - loopEndS;
+            lyricGhostUntil = switchAtCtx + ghostDuration;
+            lyricGhostFrom = Math.min(raw + remainingToEnd, loopEndS);
+            lyricGhostStartCtx = switchAtCtx;
+        } else {
+            lyricGhostUntil = 0;
+        }
 
         const switchRawSec = raw + remainingToEnd;
         const bb = barBeat(switchRawSec);
@@ -678,8 +714,8 @@ const doDualSwitchMultiStyle = () => {
         syncExtraTracksOnJump(loopStartS, dsMFadeStart, dsMFadeEnd, dsXfadeS);
 
         const curOffsetD = aeFirst.offsetDiff || 0;
-        transitionBase = raw;
-        transitionStartTime = audioCtx.currentTime;
+        transitionBase = Math.min(raw + remainingToEnd, loopEndS);
+        transitionStartTime = switchAtCtx;
         transitionPos = Math.max(0, loopStartS + curOffsetD);
     } catch (e) {
         DLog('doDualSwitchMultiStyle FATAL:', e.message, e.stack);
@@ -836,6 +872,8 @@ const doDualSwitch = () => {
 
         let remainingToEnd;
         let isFirst = false;
+        // 音频调度始终使用 loopEndS/loopDurS —— 音频正常循环
+        // 歌词显示由幽灵期机制独立处理
         if (raw < loopStartS + 0.0001) {
             remainingToEnd = loopEndS - raw;
             isFirst = true;
@@ -939,10 +977,21 @@ const doDualSwitch = () => {
         const dsFadeEnd = fadeEndAtCtx || switchAtCtx + xfadeS * 0.5;
         syncExtraTracksOnJump(loopStartS, dsFadeStart, dsFadeEnd, xfadeS);
 
-        transitionBase = raw;
-        transitionStartTime = audioCtx.currentTime;
+        // transition：从旧轨位置平滑过渡到新轨起点（switchAtCtx 之后才生效）
+        transitionBase = Math.min(raw + remainingToEnd, loopEndS);
+        transitionStartTime = switchAtCtx;
         transitionPos = loopStartS;
         currentTrack = newTrack;
+        // 设置歌词幽灵期：以 switchAtCtx 为基准对齐，避免累积偏差
+        // 幽灵期从实际切换时刻 switchAtCtx 开始，延续到 effectiveLoopEndS
+        if (loopMode === 'dual' && lyricEndS > loopEndS) {
+            const ghostDuration = effectiveLoopEndS - loopEndS;
+            lyricGhostUntil = switchAtCtx + ghostDuration;
+            lyricGhostFrom = Math.min(raw + remainingToEnd, loopEndS);
+            lyricGhostStartCtx = switchAtCtx;
+        } else {
+            lyricGhostUntil = 0;
+        }
 
         const switchRawSec = raw + remainingToEnd;
         const bb = barBeat(switchRawSec);
@@ -1355,6 +1404,20 @@ const applyTrackCfg = (cfg) => {
     loopEndS = secFromBarBeat(cfg.loop_end_bar, cfg.loop_end_beat);
     loopDurS = loopEndS - loopStartS;
     loopMode = (cfg.loop_mode && cfg.loop_mode === 'dual') ? 'dual' : 'single';
+
+    // 歌词结束时间：0 或未设置时默认 = loopEndS
+    const leBar = +cfg.lyric_end_bar || 0;
+    const leBeat = +cfg.lyric_end_beat || 0;
+    if (leBar >= 1 && leBeat >= 1) {
+        lyricEndS = secFromBarBeat(leBar, leBeat);
+    } else {
+        lyricEndS = loopEndS;
+    }
+    // 双轨模式下使用更大的 effectiveLoopEndS，让旧轨播放到歌词结束位置
+    effectiveLoopEndS = Math.max(loopEndS, lyricEndS);
+    effectiveLoopDurS = Math.max(0.01, effectiveLoopEndS - loopStartS);
+    // 重置幽灵期
+    lyricGhostUntil = 0;
     fadeInS = Math.max(0, +cfg.fade_in_beats || 0) * beatSec;
     fadeOutS = Math.max(0, +cfg.fade_out_beats || 0) * beatSec;
 
@@ -3612,10 +3675,14 @@ document.addEventListener('visibilitychange', () => {
 // 同步歌词数据到主进程（主进程据此自动启动/停止 60fps 推送）
 const syncLyricCacheToMain = () => {
     if (window.electronAPI && window.electronAPI.cacheLyricData) {
+        // 双轨模式且设置了歌词结束拍时，同步 effectiveLoop 参数
+        // 主进程据此正确估算歌词位置（使用 effectiveLoopEndS 包裹）
+        const useEffective = (loopMode === 'dual' && lyricEndS > loopEndS);
         window.electronAPI.cacheLyricData({
             lines: lyricLines,
             loopStartS: loopStartS,
-            loopDurS: loopDurS
+            loopDurS: useEffective ? effectiveLoopDurS : loopDurS,
+            loopEndS: useEffective ? effectiveLoopEndS : loopEndS
         });
     }
 };

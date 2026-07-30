@@ -28,6 +28,8 @@ function defaultTrack() {
     loop_start_beat: 1,
     loop_end_bar: 32,
     loop_end_beat: 1,
+    lyric_end_bar: 0,
+    lyric_end_beat: 0,
     fade_in_beats: 0,
     fade_out_beats: 0,
     fade_out_start_bar: 0,
@@ -481,6 +483,14 @@ function renderTrackCard(t, index) {
       <div class="field">
         <label>循环终点 (拍)</label>
         <input type="number" step="1" min="1" data-k="loop_end_beat">
+      </div>
+      <div class="field">
+        <label>歌词结束 小节 <span class="hint">(0=同循环终点；双轨模式下可设置更大值以显示结尾歌词)</span></label>
+        <input type="number" step="1" min="0" data-k="lyric_end_bar">
+      </div>
+      <div class="field">
+        <label>歌词结束 拍 <span class="hint">(0=同循环终点)</span></label>
+        <input type="number" step="1" min="0" data-k="lyric_end_beat">
       </div>
       <div class="field fade_out_start_bar_wrap">
         <label>淡出起点小节 <span class="hint">(0=自动，淡出结束对齐循环终点)</span></label>
