@@ -42,6 +42,8 @@ DEFAULT_CONFIG = {
             "loop_start_beat": 1,
             "loop_end_bar": 62,
             "loop_end_beat": 1,
+            "lyric_end_bar": 0,
+            "lyric_end_beat": 0,
             "fade_in_beats": 0,
             "fade_out_beats": 0,
             "crossfade_beats": 0,
