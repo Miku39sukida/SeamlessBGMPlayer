@@ -6,6 +6,7 @@ const state = {
   bgmList: [],
   bgmDirs: [],
   dirty: false,
+  structuralDirty: false,
   perCardSearch: new Map(),
 };
 
@@ -186,23 +187,43 @@ async function loadConfig() {
   });
   state.tracks = tracks;
   state.dirty = false;
+  state.structuralDirty = false;
   return tracks;
 }
 
 async function saveConfig() {
-  const sanitized = state.tracks.map(({ _id, _expanded, ...t }) => t);
+  const stripMeta = ({ _expanded, ...rest }) => rest;
+  let payload, mode;
+  if (state.structuralDirty) {
+    mode = 'full';
+    payload = { tracks: state.tracks.map(stripMeta), mode };
+  } else {
+    mode = 'partial';
+    const dirtyIds = new Set(
+      $$('.track-card.dirty').map(c => c.dataset.trackId)
+    );
+    const dirtyTracks = state.tracks.filter(t => dirtyIds.has(t._id));
+    if (dirtyTracks.length === 0) {
+      state.dirty = false;
+      setStatus('✅ 无变更需要保存', 'ok');
+      return true;
+    }
+    payload = { tracks: dirtyTracks.map(stripMeta), mode };
+  }
   const res = await fetch('/api/config', {
     credentials: 'include',
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tracks: sanitized }),
+    body: JSON.stringify(payload),
   });
   if (res.status === 401) { location.href = '/login'; return false; }
   const data = await res.json();
   if (!data.ok) { setStatus('💾 保存失败：' + (data.error || ''), 'err'); return false; }
   state.dirty = false;
+  state.structuralDirty = false;
   $$('.track-card').forEach(c => c.classList.remove('dirty'));
-  setStatus('✅ 配置已保存！', 'ok');
+  const saveMsg = mode === 'full' ? '全量' : '增量 ' + payload.tracks.length + ' 项';
+  setStatus('✅ 配置已保存！(' + saveMsg + ')', 'ok');
   return true;
 }
 
@@ -400,7 +421,136 @@ function renderTrackCard(t, index) {
         <button class="btn btn-icon" data-act="delete" title="删除" style="background:var(--danger);">🗑</button>
       </div>
     </div>
-    <div class="tc-body">
+    <div class="tc-body"></div>
+  `;
+
+  $('.tc-idx', card).textContent = String(index + 1);
+  const nameInput = $('.tc-name-input', card);
+  nameInput.value = t.name || '';
+  nameInput.addEventListener('input', () => {
+    t.name = nameInput.value;
+    markDirty(card);
+    if (card.dataset.bodyRendered) {
+      refreshPreview(card, t);
+      validateTrack(t, card);
+    }
+  });
+
+  // actions
+  card.querySelector('[data-act="up"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    if (i <= 0) return;
+    [state.tracks[i - 1], state.tracks[i]] = [state.tracks[i], state.tracks[i - 1]];
+    markDirty();
+    const cardEl = getCardByTrackId(t._id);
+    const prevCard = cardEl.previousElementSibling;
+    if (cardEl && prevCard && prevCard.classList.contains('track-card')) {
+      prevCard.insertAdjacentElement('beforebegin', cardEl);
+      updateCardIndex(cardEl, i - 1);
+      updateCardIndex(prevCard, i);
+    }
+  });
+  card.querySelector('[data-act="down"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    if (i < 0 || i >= state.tracks.length - 1) return;
+    [state.tracks[i + 1], state.tracks[i]] = [state.tracks[i], state.tracks[i + 1]];
+    markDirty();
+    const cardEl = getCardByTrackId(t._id);
+    const nextCard = cardEl.nextElementSibling;
+    if (cardEl && nextCard && nextCard.classList.contains('track-card')) {
+      nextCard.insertAdjacentElement('afterend', cardEl);
+      updateCardIndex(cardEl, i + 1);
+      updateCardIndex(nextCard, i);
+    }
+  });
+  card.querySelector('[data-act="insert-above"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    const newTrack = { ...defaultTrack(), _expanded: true };
+    state.tracks.splice(i, 0, newTrack);
+    markDirty();
+    insertCardDOM(newTrack, i);
+    requestAnimationFrame(() => {
+      const newCardEl = getCardByTrackId(newTrack._id);
+      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+  card.querySelector('[data-act="insert-below"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    const newTrack = { ...defaultTrack(), _expanded: true };
+    state.tracks.splice(i + 1, 0, newTrack);
+    markDirty();
+    insertCardDOM(newTrack, i + 1);
+    requestAnimationFrame(() => {
+      const newCardEl = getCardByTrackId(newTrack._id);
+      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+  card.querySelector('[data-act="duplicate"]').addEventListener('click', () => {
+    const i = state.tracks.indexOf(t);
+    const copy = { ...defaultTrack(), ...JSON.parse(JSON.stringify(t)), _id: randId(), name: (t.name || '新曲目') + ' (副本)', _expanded: true };
+    state.tracks.splice(i + 1, 0, copy);
+    markDirty();
+    insertCardDOM(copy, i + 1);
+  });
+  card.querySelector('[data-act="delete"]').addEventListener('click', () => {
+    if (!confirm(`确定删除曲目 "${t.name}" 吗？`)) return;
+    const i = state.tracks.indexOf(t);
+    state.tracks = state.tracks.filter(x => x._id !== t._id);
+    markDirty();
+    const cardEl = getCardByTrackId(t._id);
+    if (cardEl) {
+      cardEl.remove();
+      updateIndicesFrom(i);
+    }
+    refreshTrackCount();
+  });
+
+  // 折叠 / 展开
+  const toggleCollapse = (e) => {
+    if (e) {
+      const tag = (e.target && e.target.tagName) || '';
+      const cls = (e.target && e.target.className) || '';
+      if (typeof cls === 'string' && (
+        cls.includes('btn-icon') || cls.includes('tc-name-input') ||
+        cls.includes('tc-collapse-btn')
+      )) {
+        if (cls.includes('btn-icon') || cls.includes('tc-name-input')) return;
+      }
+      if (e.target.closest && (e.target.closest('button') && !e.target.closest('.tc-collapse-btn'))) return;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'LABEL') return;
+    }
+    const collapsed = card.classList.toggle('collapsed');
+    const arrow = card.querySelector('.tc-collapse-arrow');
+    if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
+    if (!collapsed && !card.dataset.bodyRendered) {
+      renderTrackCardBody(card, t);
+    }
+  };
+  const hdr = card.querySelector('.tc-header');
+  const collBtn = card.querySelector('.tc-collapse-btn');
+  if (hdr) hdr.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.tc-actions') && !e.target.closest('.tc-collapse-btn')) return;
+    toggleCollapse(e);
+  });
+  if (collBtn) collBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleCollapse(null);
+  });
+  // 默认折叠态箭头
+  const arrow = card.querySelector('.tc-collapse-arrow');
+  if (arrow && card.classList.contains('collapsed')) arrow.textContent = '▸';
+
+  if (startExpanded) {
+    renderTrackCardBody(card, t);
+  }
+  return card;
+}
+
+function renderTrackCardBody(card, t) {
+  if (card.dataset.bodyRendered) return;
+  card.dataset.bodyRendered = '1';
+  const bodyEl = card.querySelector('.tc-body');
+  bodyEl.innerHTML = `
     <div class="section-title">🎵 基础 &amp; 文件</div>
     <div class="grid-1">
       <div class="field">
@@ -659,15 +809,12 @@ function renderTrackCard(t, index) {
         </div>
       </div>
     </div>
-    </div>
   `;
 
-  $('.tc-idx', card).textContent = String(index + 1);
-  $('.tc-name-input', card).value = t.name || '';
   $$('input, select', card).forEach(el => {
+    if (el.classList.contains('tc-name-input')) return;
     const k = el.dataset.k;
-    if (k && el.classList.contains('tc-name-input')) { el.value = t[k] ?? ''; }
-    else if (k && typeof t[k] !== 'undefined' && k !== 'bgm_dir_id') { el.value = t[k]; }
+    if (k && typeof t[k] !== 'undefined' && k !== 'bgm_dir_id') { el.value = t[k]; }
     else if (k === 'bgm_dir_id') { el.value = t.bgm_dir_id || 'default'; }
   });
   const dirSelect = $('select[data-k="bgm_dir_id"]', card);
@@ -704,7 +851,8 @@ function renderTrackCard(t, index) {
     if (el.classList.contains('file-select') || el.classList.contains('fp-search') || el.classList.contains('dir-select') || 
         el.classList.contains('style-name') || el.classList.contains('style-file-select') || 
         el.classList.contains('style-file-search') || el.classList.contains('style-file-list') ||
-        el.classList.contains('vocal-file-select') || el.classList.contains('vocal-file-search')) return;
+        el.classList.contains('vocal-file-select') || el.classList.contains('vocal-file-search') ||
+        el.classList.contains('tc-name-input')) return;
     el.addEventListener('input', () => {
       const k = el.dataset.k;
       if (!k) return;
@@ -715,75 +863,6 @@ function renderTrackCard(t, index) {
       refreshPreview(card, t);
       validateTrack(t, card);
     });
-  });
-
-  // actions
-  card.querySelector('[data-act="up"]').addEventListener('click', () => {
-    const i = state.tracks.indexOf(t);
-    if (i <= 0) return;
-    [state.tracks[i - 1], state.tracks[i]] = [state.tracks[i], state.tracks[i - 1]];
-    markDirty();
-    const cardEl = getCardByTrackId(t._id);
-    const prevCard = cardEl.previousElementSibling;
-    if (cardEl && prevCard && prevCard.classList.contains('track-card')) {
-      prevCard.insertAdjacentElement('beforebegin', cardEl);
-      updateCardIndex(cardEl, i - 1);
-      updateCardIndex(prevCard, i);
-    }
-  });
-  card.querySelector('[data-act="down"]').addEventListener('click', () => {
-    const i = state.tracks.indexOf(t);
-    if (i < 0 || i >= state.tracks.length - 1) return;
-    [state.tracks[i + 1], state.tracks[i]] = [state.tracks[i], state.tracks[i + 1]];
-    markDirty();
-    const cardEl = getCardByTrackId(t._id);
-    const nextCard = cardEl.nextElementSibling;
-    if (cardEl && nextCard && nextCard.classList.contains('track-card')) {
-      nextCard.insertAdjacentElement('afterend', cardEl);
-      updateCardIndex(cardEl, i + 1);
-      updateCardIndex(nextCard, i);
-    }
-  });
-  card.querySelector('[data-act="insert-above"]').addEventListener('click', () => {
-    const i = state.tracks.indexOf(t);
-    const newTrack = { ...defaultTrack(), _expanded: true };
-    state.tracks.splice(i, 0, newTrack);
-    markDirty();
-    insertCardDOM(newTrack, i);
-    requestAnimationFrame(() => {
-      const newCardEl = getCardByTrackId(newTrack._id);
-      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  });
-  card.querySelector('[data-act="insert-below"]').addEventListener('click', () => {
-    const i = state.tracks.indexOf(t);
-    const newTrack = { ...defaultTrack(), _expanded: true };
-    state.tracks.splice(i + 1, 0, newTrack);
-    markDirty();
-    insertCardDOM(newTrack, i + 1);
-    requestAnimationFrame(() => {
-      const newCardEl = getCardByTrackId(newTrack._id);
-      if (newCardEl) newCardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  });
-  card.querySelector('[data-act="duplicate"]').addEventListener('click', () => {
-    const i = state.tracks.indexOf(t);
-    const copy = { ...defaultTrack(), ...JSON.parse(JSON.stringify(t)), _id: randId(), name: (t.name || '新曲目') + ' (副本)', _expanded: true };
-    state.tracks.splice(i + 1, 0, copy);
-    markDirty();
-    insertCardDOM(copy, i + 1);
-  });
-  card.querySelector('[data-act="delete"]').addEventListener('click', () => {
-    if (!confirm(`确定删除曲目 "${t.name}" 吗？`)) return;
-    const i = state.tracks.indexOf(t);
-    state.tracks = state.tracks.filter(x => x._id !== t._id);
-    markDirty();
-    const cardEl = getCardByTrackId(t._id);
-    if (cardEl) {
-      cardEl.remove();
-      updateIndicesFrom(i);
-    }
-    refreshTrackCount();
   });
 
   const renderTempoChanges = () => {
@@ -1515,41 +1594,8 @@ function renderTrackCard(t, index) {
     renderLoopSfxFileOptions();
   });
 
-  // 折叠 / 展开
-  const toggleCollapse = (e) => {
-    if (e) {
-      const tag = (e.target && e.target.tagName) || '';
-      const cls = (e.target && e.target.className) || '';
-      if (typeof cls === 'string' && (
-        cls.includes('btn-icon') || cls.includes('tc-name-input') ||
-        cls.includes('tc-collapse-btn')
-      )) {
-        if (cls.includes('btn-icon') || cls.includes('tc-name-input')) return;
-      }
-      if (e.target.closest && (e.target.closest('button') && !e.target.closest('.tc-collapse-btn'))) return;
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'LABEL') return;
-    }
-    const collapsed = card.classList.toggle('collapsed');
-    const arrow = card.querySelector('.tc-collapse-arrow');
-    if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
-  };
-  const hdr = card.querySelector('.tc-header');
-  const collBtn = card.querySelector('.tc-collapse-btn');
-  if (hdr) hdr.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('.tc-actions') && !e.target.closest('.tc-collapse-btn')) return;
-    toggleCollapse(e);
-  });
-  if (collBtn) collBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleCollapse(null);
-  });
-  // 默认折叠态箭头
-  const arrow = card.querySelector('.tc-collapse-arrow');
-  if (arrow && card.classList.contains('collapsed')) arrow.textContent = '▸';
-
   refreshPreview(card, t);
   validateTrack(t, card);
-  return card;
 }
 
 function refreshPreview(card, t) {
@@ -1729,7 +1775,10 @@ function closeSearchResults() {
 function markDirty(card) {
   state.dirty = true;
   if (card) card.classList.add('dirty');
-  else $$('.track-card').forEach(c => c.classList.add('dirty'));
+  else {
+    state.structuralDirty = true;
+    $$('.track-card').forEach(c => c.classList.add('dirty'));
+  }
 }
 
 /* ============================ IMPORT CHANGES MODAL ============================ */
@@ -1834,6 +1883,7 @@ async function init() {
   $('#saveBtn').addEventListener('click', async () => {
     let allOk = true;
     $$('.track-card').forEach(c => {
+      if (!c.dataset.bodyRendered) return;
       const id = c.dataset.trackId;
       const t = state.tracks.find(x => x._id === id);
       if (t && !validateTrack(t, c)) allOk = false;
