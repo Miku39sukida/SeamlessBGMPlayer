@@ -562,6 +562,8 @@ function renderTrackCardBody(card, t) {
         <select data-k="font_face">
           <option value="default">默认字体</option>
           <option value="teyvat">提瓦特字体</option>
+          <option value="851tegakizatsu">851手書き雑（手写体）</option>
+          <option value="zpix">Zpix 像素字体</option>
         </select>
       </div>
     </div>

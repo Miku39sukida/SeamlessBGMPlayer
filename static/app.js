@@ -1644,6 +1644,10 @@ const playTrack = async (idx) => {
             lyricEl.style.fontFamily = '';
             if (cfg.font_face === 'teyvat') {
                 lyricEl.style.fontFamily = '"Teyvat", "GenshinJA", "Yu Gothic UI", "Microsoft YaHei", sans-serif';
+            } else if (cfg.font_face === 'zpix') {
+                lyricEl.style.fontFamily = '"Zpix", "Yu Gothic UI", sans-serif';
+            } else if (cfg.font_face === '851tegakizatsu') {
+                lyricEl.style.fontFamily = '"851tegakizatsu", "Yu Gothic UI", sans-serif';
             }
         }
         
