@@ -199,6 +199,14 @@ def load_config():
             t['loop_sfx_fade_in_beats'] = 4
         if 'gain' not in t or t['gain'] is None:
             t['gain'] = 1.0
+    # 为缺少 _id 的曲目分配唯一 ID 并持久化（一次性迁移）
+    needs_save = False
+    for t in cfg['tracks']:
+        if isinstance(t, dict) and not t.get('_id'):
+            t['_id'] = 'id_' + uuid.uuid4().hex[:8]
+            needs_save = True
+    if needs_save:
+        save_config_raw(cfg)
     return cfg
 
 def save_config_raw(cfg):
@@ -1051,7 +1059,46 @@ def save_config():
     if not isinstance(data.get('tracks'), list):
         return jsonify({"ok": False, "error": "格式错误，缺少 tracks 数组"}), 400
     cfg = load_config()
-    cfg['tracks'] = data['tracks']
+    mode = data.get('mode') or 'full'
+    if mode == 'partial':
+        incoming = data['tracks']
+        id_to_new = {}
+        for nt in incoming:
+            if not isinstance(nt, dict):
+                continue
+            tid = nt.get('_id')
+            if tid:
+                id_to_new[tid] = nt
+        if not id_to_new:
+            return jsonify({"ok": False, "error": "增量保存失败：未找到带 _id 的曲目"}), 400
+        replaced = 0
+        matched_indices = set()
+        for i, t in enumerate(cfg['tracks']):
+            if not isinstance(t, dict):
+                continue
+            tid = t.get('_id')
+            if tid and tid in id_to_new:
+                cfg['tracks'][i] = id_to_new[tid]
+                replaced += 1
+                matched_indices.add(i)
+        # 回退：若部分曲目在 config 中尚无 _id（历史数据），按索引位置匹配
+        if replaced < len(id_to_new):
+            unmatched = [nt for nt in incoming if nt.get('_id') not in
+                        {cfg['tracks'][j].get('_id') for j in matched_indices
+                         if isinstance(cfg['tracks'][j], dict)}]
+            for i, t in enumerate(cfg['tracks']):
+                if i in matched_indices:
+                    continue
+                if not isinstance(t, dict):
+                    continue
+                if unmatched:
+                    cfg['tracks'][i] = unmatched.pop(0)
+                    replaced += 1
+                    matched_indices.add(i)
+        if replaced == 0:
+            return jsonify({"ok": False, "error": "增量保存失败：未匹配到任何曲目"}), 400
+    else:
+        cfg['tracks'] = data['tracks']
     if isinstance(data.get('bgm_dirs'), list):
         new_dirs = [d for d in data['bgm_dirs'] if isinstance(d, dict)]
         has_default = any(d.get('id') == DEFAULT_DIR_ID for d in new_dirs)
