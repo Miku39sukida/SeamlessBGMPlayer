@@ -7,6 +7,8 @@ const DLog = (...a) => { if (window.DEBUG_AUDIO) console.log('[AUDIO]', ...a); }
 let audioCtx = null;
 let masterGain = null;
 let configGainNode = null;
+// 保存用户调节的主音量（0~1），确保重建 AudioContext 时恢复，避免开始播放/换歌时回满音量
+let currentMasterVolume = 1.0;
 let audioBuffer = null;
 let audioCache = {};
 let audioLoading = {};
@@ -122,7 +124,7 @@ const ensureCtx = () => {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioCtx.createGain();
-        masterGain.gain.value = 1.0;
+        masterGain.gain.value = currentMasterVolume;
         masterGain.connect(audioCtx.destination);
         configGainNode = audioCtx.createGain();
         configGainNode.gain.value = 1.0;
@@ -3589,7 +3591,8 @@ const init = async () => {
     $('volumeSlider').addEventListener('input', (e) => {
         const v = parseInt(e.target.value);
         $('volumeVal').textContent = v;
-        if (masterGain) masterGain.gain.value = v / 100.0;
+        currentMasterVolume = v / 100.0;
+        if (masterGain) masterGain.gain.value = currentMasterVolume;
     });
 
     $('addBtn').addEventListener('click', () => {
