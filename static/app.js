@@ -2227,6 +2227,10 @@ const breakLoop = () => {
     loopEndS = audioDurS;
     loopDurS = Math.max(0, loopEndS - loopStartS);
 
+    // 同步新的循环参数到主进程，避免桌面歌词仍按旧循环段做回绕计算
+    // （跳出循环后 loopEndS=audioDurS，loopDurS=整曲剩余长度，主进程模运算不再回绕）
+    syncLyricCacheToMain();
+
     const btn = $('breakLoopBtn');
     if (btn) {
         btn.disabled = true;
@@ -2400,6 +2404,9 @@ const toggleFullLoop = () => {
         clearTimeout(loopSchedulerTimer);
         loopSchedulerTimer = null;
         scheduleNextLoop();
+
+        // 同步完整循环参数到主进程，避免桌面歌词仍按旧循环段回绕
+        syncLyricCacheToMain();
 
         DLog('toggleFullLoop: switched to full loop mode (no track change)');
         return;
@@ -2676,6 +2683,9 @@ const toggleFullLoop = () => {
     fadeInS = origFadeIn;
     fadeOutS = origFadeOut;
     window._savedLoopParams = null;
+
+    // 同步恢复后的循环参数到主进程，桌面歌词按原循环段回绕
+    syncLyricCacheToMain();
 
     // 4. 更新按钮状态
     const flBtn = $('fullLoopBtn');
