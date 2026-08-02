@@ -8,7 +8,45 @@ const state = {
   dirty: false,
   structuralDirty: false,
   perCardSearch: new Map(),
+  fontAvailability: {},
 };
+
+// 字体文件映射（用于可用性检查）
+const FONT_FILES = {
+  teyvat: '/static/TEYVATBLACK-REGULAR.TTF',
+  '851tegakizatsu': '/static/851tegakizatsu.TTF',
+  zpix: '/static/ZPIX.TTF',
+};
+
+// 检查字体文件是否存在（HEAD 请求），结果存入 state.fontAvailability
+async function checkFontAvailability() {
+  for (const [name, url] of Object.entries(FONT_FILES)) {
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      state.fontAvailability[name] = res.ok;
+    } catch {
+      state.fontAvailability[name] = false;
+    }
+  }
+  // 标记所有已渲染的 font_face select
+  document.querySelectorAll('select[data-k="font_face"]').forEach(sel => markFontFaceOptions(sel));
+}
+
+// 给未安装字体的 option 加 "(未安装)" 标记
+function markFontFaceOptions(sel) {
+  if (!sel || sel.dataset.k !== 'font_face') return;
+  const suffix = ' (未安装，请下载)';
+  Array.from(sel.options).forEach(opt => {
+    if (opt.value === 'default') return;
+    const baseText = opt.textContent.replace(suffix, '');
+    const available = state.fontAvailability[opt.value];
+    if (available === false) {
+      opt.textContent = baseText + suffix;
+    } else {
+      opt.textContent = baseText;
+    }
+  });
+}
 
 function randId() {
   return 'id_' + Math.random().toString(36).slice(2, 10);
@@ -864,6 +902,15 @@ function renderTrackCardBody(card, t) {
       markDirty(card);
       refreshPreview(card, t);
       validateTrack(t, card);
+      // 字体可用性提示
+      if (k === 'font_face' && v !== 'default' && state.fontAvailability[v] === false) {
+        const fontLabel = el.options[el.selectedIndex].textContent.replace(' (未安装，请下载)', '');
+        const downloadLinks = {
+          '851tegakizatsu': 'https://share.feijipan.com/s/mY5Srwa1',
+        };
+        const link = downloadLinks[v] || '见 README.md「下载额外字体」章节';
+        alert(`⚠️ 字体「${fontLabel}」未安装！\n\n请先下载字体文件放入 static/ 目录：\n${link}\n\n详见 README.md「🔤 下载额外字体」章节。`);
+      }
     });
   });
 
@@ -1598,6 +1645,10 @@ function renderTrackCardBody(card, t) {
 
   refreshPreview(card, t);
   validateTrack(t, card);
+
+  // 标记未安装字体的 option
+  const fontFaceSel = card.querySelector('select[data-k="font_face"]');
+  if (fontFaceSel) markFontFaceOptions(fontFaceSel);
 }
 
 function refreshPreview(card, t) {
@@ -1858,6 +1909,9 @@ async function init() {
   } catch (e) {
     setStatus('❌ 初始化失败：' + e.message, 'err');
   }
+
+  // 异步检查字体可用性（不阻塞主流程）
+  checkFontAvailability();
 
   bindImportChangesModal();
 

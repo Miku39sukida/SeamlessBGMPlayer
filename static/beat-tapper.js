@@ -68,6 +68,21 @@ class BeatTapper {
         $bt('#beatTapperImportCfg').addEventListener('click', () => this.importConfig());
         $bt('#beatTapperLoadFromTrack').addEventListener('click', () => this.loadFromTrack());
         $bt('#beatTapperLoadLyric').addEventListener('click', () => this.loadLyric());
+        $bt('#beatTapperExportLrc').addEventListener('click', () => this.openExportLrc());
+
+        $bt('#exportLrcDownload').addEventListener('click', () => this.downloadLRC());
+        $bt('#exportLrcSaveServer').addEventListener('click', () => this.saveLrcToServer());
+        $bt('#exportLrcCopy').addEventListener('click', () => this.showLrcCopyResult());
+        $bt('#exportLrcCopyBtn').addEventListener('click', () => this.copyLrcToClipboard());
+        $bt('#exportLrcClose').addEventListener('click', () => this.closeExportLrcModal());
+        $bt('#exportLrcModal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) this.closeExportLrcModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && $bt('#exportLrcModal').style.display !== 'none') {
+                this.closeExportLrcModal();
+            }
+        });
 
         $bt('.beat-tapper-rhythm-types').addEventListener('click', (e) => {
             if (e.target.classList.contains('beat-tapper-rhythm-btn')) {
@@ -939,6 +954,185 @@ class BeatTapper {
         } catch (e) {
             this.setStatus('❌ 载入失败: ' + e.message);
         }
+    }
+
+    /* ============================ 导出 LRC ============================ */
+
+    /**
+     * 将 BRC 内容（[小节:拍]歌词）转换为 LRC 内容（[mm:ss.xxx]歌词）
+     * - 有 [bar:beat] 标签的行：转为 [mm:ss.xxx] + 歌词
+     * - 空行：保留为空行（维持歌词结构）
+     * - 有内容但无标签的行：跳过（在 LRC 中无意义）
+     * @returns {string|null} LRC 文本；若没有节拍标签则返回 null
+     */
+    convertBRCToLRC(content) {
+        const bpm = parseFloat($bt('#beatTapperBpm').value) || 120;
+        const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
+        const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
+        const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
+
+        const lines = content.split('\n');
+        const tagRegex = /^\[(\d+):([\d.]+)\]/;
+        const result = [];
+        let tagCount = 0;
+
+        for (const line of lines) {
+            const match = line.match(tagRegex);
+            if (match) {
+                const bar = parseInt(match[1]);
+                const beat = parseFloat(match[2]);
+                const lyric = line.substring(match[0].length);
+                let time = window.BeatUtils.barBeatToTime(
+                    bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat,
+                    this.tempoChanges, this.meterChanges
+                );
+                if (!isFinite(time) || time < 0) time = 0;
+                result.push(this.formatLrcTime(time) + lyric);
+                tagCount++;
+            } else if (line.trim() === '') {
+                result.push('');
+            }
+            // 有内容但无标签的行：跳过
+        }
+
+        if (tagCount === 0) return null;
+        return result.join('\n');
+    }
+
+    /**
+     * 将秒数格式化为 LRC 时间标签 [mm:ss.xxx]（毫秒固定 3 位）
+     */
+    formatLrcTime(seconds) {
+        if (!isFinite(seconds) || seconds < 0) seconds = 0;
+        const totalMs = Math.round(seconds * 1000);
+        const m = Math.floor(totalMs / 60000);
+        const s = Math.floor((totalMs % 60000) / 1000);
+        const ms = totalMs % 1000;
+        return `[${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}]`;
+    }
+
+    openExportLrc() {
+        const editor = $bt('#beatTapperEditor');
+        const content = editor.value;
+        if (!content.trim()) {
+            this.setStatus('❌ 编辑器为空，无法导出 LRC');
+            return;
+        }
+
+        const lrc = this.convertBRCToLRC(content);
+        if (lrc === null) {
+            this.setStatus('❌ 未找到节拍标签 [小节:拍]，请先打点');
+            return;
+        }
+
+        this._exportedLrc = lrc;
+        const filename = $bt('#beatTapperFile').value || 'lyric.txt';
+        this._exportedLrcName = filename.replace(/\.[^.]+$/, '') + '.lrc';
+
+        const hint = $bt('#exportLrcHint');
+        const tagCount = (lrc.match(/^\[\d{2}:\d{2}\.\d{3}\]/gm) || []).length;
+        hint.textContent = `已转换 ${tagCount} 行节拍标签 · 文件名：${this._exportedLrcName}`;
+
+        $bt('#exportLrcChoice').style.display = '';
+        $bt('#exportLrcResult').style.display = 'none';
+        $bt('#exportLrcModal').style.display = '';
+        this.setStatus('✅ LRC 已生成，请选择导出方式');
+    }
+
+    downloadLRC() {
+        if (!this._exportedLrc) return;
+        const blob = new Blob([this._exportedLrc], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = this._exportedLrcName || 'lyric.lrc';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        this.setStatus(`✅ LRC 已下载：${a.download}`);
+        this.closeExportLrcModal();
+    }
+
+    async saveLrcToServer() {
+        if (!this._exportedLrc) return;
+        const filename = $bt('#beatTapperFile').value;
+        const dirId = $bt('#beatTapperDir').value;
+        if (!filename) {
+            this.setStatus('❌ 请先选择音频文件');
+            return;
+        }
+        const btn = $bt('#exportLrcSaveServer');
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ 保存中...';
+        try {
+            const resp = await fetch('/api/save-lrc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    filename: filename,
+                    dir_id: dirId,
+                    content: this._exportedLrc
+                })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                this.setStatus(`✅ LRC 已保存到音频同目录：${this._exportedLrcName}`);
+                this.closeExportLrcModal();
+            } else {
+                this.setStatus('❌ 保存失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            this.setStatus('❌ 保存失败: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = oldText;
+        }
+    }
+
+    showLrcCopyResult() {
+        if (!this._exportedLrc) return;
+        $bt('#exportLrcCode').textContent = this._exportedLrc;
+        $bt('#exportLrcChoice').style.display = 'none';
+        $bt('#exportLrcResult').style.display = '';
+        const btn = $bt('#exportLrcCopyBtn');
+        btn.classList.remove('copied');
+        btn.textContent = '📋';
+    }
+
+    async copyLrcToClipboard() {
+        if (!this._exportedLrc) return;
+        const btn = $bt('#exportLrcCopyBtn');
+        const oldText = btn.textContent;
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(this._exportedLrc);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = this._exportedLrc;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            btn.classList.add('copied');
+            btn.textContent = '✅';
+            this.setStatus('✅ LRC 已复制到剪贴板');
+            setTimeout(() => {
+                btn.classList.remove('copied');
+                btn.textContent = oldText;
+            }, 1500);
+        } catch (e) {
+            this.setStatus('❌ 复制失败: ' + e.message);
+        }
+    }
+
+    closeExportLrcModal() {
+        $bt('#exportLrcModal').style.display = 'none';
     }
 }
 
