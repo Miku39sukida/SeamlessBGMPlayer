@@ -264,6 +264,7 @@
       <button class="beat-calc-config-btn" id="beatTapperImportCfg">📥 导入配置</button>
       <button class="beat-calc-config-btn" id="beatTapperLoadFromTrack">🎵 从曲目载入</button>
       <button class="beat-calc-config-btn" id="beatTapperLoadLyric">📝 载入歌词</button>
+      <button class="beat-calc-config-btn" id="beatTapperExportLrc">📤 导出 LRC</button>
     </div>
   </div>
   <div class="beat-tapper-section">
@@ -323,6 +324,30 @@
 
 <div class="beat-tapper-minimized" id="beatTapperMinimized" style="display:none;">
   <button id="beatTapperRestore" class="beat-tapper-min-btn">🥁</button>
+</div>
+
+<!-- 导出 LRC 弹窗（最顶层） -->
+<div class="modal-mask export-lrc-modal" id="exportLrcModal" style="display:none;">
+  <div class="modal-card export-lrc-card">
+    <div class="modal-title">📤 导出 LRC 歌词</div>
+    <div class="modal-body" id="exportLrcChoice">
+      <div class="export-lrc-actions">
+        <button class="btn btn-primary" id="exportLrcDownload">💾 下载到本地</button>
+        <button class="btn" id="exportLrcSaveServer">📁 保存到同目录</button>
+        <button class="btn" id="exportLrcCopy">📋 复制导出</button>
+      </div>
+      <div class="export-lrc-hint" id="exportLrcHint"></div>
+    </div>
+    <div class="modal-body export-lrc-result" id="exportLrcResult" style="display:none;">
+      <div class="export-lrc-code-wrap">
+        <button class="export-lrc-copy-icon" id="exportLrcCopyBtn" title="复制到剪贴板">📋</button>
+        <code id="exportLrcCode"></code>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-small" id="exportLrcClose">关闭</button>
+    </div>
+  </div>
 </div>
 
 <!-- 搜索结果弹窗 -->
