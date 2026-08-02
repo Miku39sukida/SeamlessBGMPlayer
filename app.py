@@ -1026,6 +1026,34 @@ def save_brc():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route('/api/save-lrc', methods=['POST'])
+@login_required
+def save_lrc():
+    """保存 LRC 歌词文件到音频同目录（用于节奏打点导出 LRC）。"""
+    data = request.get_json(silent=True) or {}
+    filename = data.get('filename')
+    dir_id = data.get('dir_id')
+    content = data.get('content', '')
+
+    if not filename:
+        return jsonify({"ok": False, "error": "缺少文件名"}), 400
+
+    audio_path = resolve_bgm_file(filename, dir_id=dir_id or None)
+    if not audio_path:
+        return jsonify({"ok": False, "error": "音频文件不存在"}), 400
+
+    audio_dir = os.path.dirname(audio_path)
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    lrc_path = os.path.join(audio_dir, stem + '.lrc')
+
+    try:
+        with open(lrc_path, 'w', encoding='utf-8') as fh:
+            fh.write(content)
+        return jsonify({"ok": True, "data": {"path": lrc_path}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route('/font/<path:filename>')
 def get_font(filename):
     """返回 Font 目录下的字体文件（原神日式字体等）。"""
