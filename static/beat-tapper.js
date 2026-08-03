@@ -1395,8 +1395,7 @@ class BeatTapper {
                 const bar = parseInt(match[1]);
                 const beat = parseFloat(match[2]);
                 let time = window.BeatUtils.barBeatToTime(
-                    bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, nvf,
-                    this.tempoChanges, this.meterChanges
+                    bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf
                 );
                 if (!isFinite(time) || time < 0) time = 0;
                 const lineHead = this.formatLrcTime(time);
@@ -1412,13 +1411,13 @@ class BeatTapper {
                         const cBeat = parseFloat(m[2]);
                         const cText = m[3];
                         let cTime = window.BeatUtils.barBeatToTime(
-                            cBar, cBeat, bpm, beatsPerBar, zeroBar, zeroBeat, nvf,
-                            this.tempoChanges, this.meterChanges
+                            cBar, cBeat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf
                         );
                         if (!isFinite(cTime) || cTime < 0) cTime = 0;
                         charPart += this.formatLrcTime(cTime).replace('[', '<').replace(']', '>') + cText;
                     }
-                    result.push(lineHead + charPart);
+                    // 兼容：整行没有逐字标签（通常模式写法 / 歌曲信息行）时，取整行剩余文本
+                    result.push(lineHead + (charPart || rest));
                     tagCount++;
                 } else {
                     const lyric = line.substring(match[0].length);
