@@ -1,6 +1,6 @@
-# 🎵 无缝循环播放器 v3.0.3
+# 🎵 无缝循环播放器 v3.0.9
 基于 **BPM 节拍对齐 + Web Audio API 双轨调度** 的毫秒级无缝 BGM 循环网页播放器。自带密码保护的 Web 管理后台，支持多目录 BGM 管理、精确到 5 位小数的 BPM 参数、双轨/单轨两种循环模式、跳转段衔接，并对 PC / 平板 / 移动端浏览器全面响应式适配。内置 LRC 卡拉OK歌词字幕引擎（支持逐字/逐词组/双语）与 BRC 节拍歌词格式，配合节拍歌词编辑器实现高效打节奏。支持多风格音频切换，同一曲目可配置多种配器风格版本，实现无缝交叉淡入淡出衔接。支持风格切换时歌词同步切换。支持人声轨/伴奏模式一键切换，独立配置人声轨文件与偏移参数，3秒平滑淡入淡出过渡。支持多轨道混音，每首曲目可配置任意数量的额外轨道（伴奏轨、人声轨、合唱轨等），支持命名与独立音量控制，播放器默认全开。支持收尾音频，配置后「跳出循环」按钮变为「收尾」，点击后整体混音淡出、收尾音频直接播放，无缝衔接。支持完整循环切换，播放器可在循环段与整曲循环之间无缝交叉淡入淡出，模拟原神热舞乐台式的动态循环设计。
-> 版本：**3.0.3**
+> 版本：**3.0.9**
 > License：MIT  
 > 桌面端：[Electron-Web-Browser](https://github.com/Miku39sukida/Electron-Web-Browser)  
 > 桌面歌词搭配Electron体验更好哦~
@@ -93,13 +93,17 @@
 - **独立窗口**：管理面板点击「🥁 节奏打点」打开，支持拖动、最小化/还原
 - **歌词优先编辑**：直接在文本框中输入歌词，每行一句，格式为 `[小节:拍]歌词内容`
 - **快捷键操作**：
-  - `F3`：在光标所在行插入节拍标签，自动跳到下一行
-  - `F2`：删除当前行的节拍标签
+  - `F3`：在光标所在行插入节拍标签，自动跳到下一行（逐行模式）；卡拉OK模式下在光标处插入字标签 `<小节:拍>` 并自动跳到下一字前
+  - `F2`：删除当前行的节拍标签（逐行模式）；卡拉OK模式下撤回最近的字标签，行内无字标签时撤回行首标签
   - `F1`：根据当前行标签跳转到对应时间
 - **移动端按钮**：三个大圆形按钮，方便移动端操作（打点、撤回、跳转）
 - **五种节奏模式**：整拍、半拍、均匀节奏、快速摇摆、三连音，自动吸附到最近的目标节拍
+- **卡拉OK模式**：勾选「卡拉OK模式（逐字打点）」复选框后切换为逐字打点，BRC 格式扩展为 `[小节:拍]<小节:拍>字<小节:拍>字`，行首 `[bar:beat]` 为行起点、行内 `<bar:beat>字` 为每字起点；播放器前端早已内置 `_buildFlattenCharSlots` 逐字渲染引擎与 `.karaoke-char` 高亮动画，后端 `parse_brc_content` 解析 `<bar:beat>` 填充 `karaoke` 数组，Electron 桌面歌词同步透传，三层联动实现毫秒级逐字高亮；未勾选则保持原逐行 `[小节:拍]歌词` 格式
+- **逐字打点交互**：F3 在光标处插 `<bar:beat>` 字标签并自动跳到下一字前（Unicode 码点分割，正确处理中日韩字符与 emoji）；光标后无字（行尾）时插入的标签作为结束节拍（标记最后字结束时间），光标自动跳到下一行开头；F2 撤回最近的字标签后光标跳到"上一个节拍点"（前一个字标签的 `>` 后面，或行首标签后）便于重打；插入/撤回后编辑器自动滚动到光标位置，长歌词无需手动滑动
+- **播放自动跟随滚动**：播放时编辑器自动跟随当前节拍位置滚动，使用 mirror div 精确测量每行位置（而非 `scrollHeight/lines` 粗略估算），卡拉OK模式下每行字符数不同也能准确定位到目标行；目标行位于视口 1/3 位置，便于查看上下文；用户手动滚动或编辑时重置跟随状态，不干扰手动操作；拖动进度条（seeking）时暂停自动跟随
+- **倍速播放**：播放进度区新增倍速选择器（0.5× / 0.75× / 1× / 1.25× / 1.5× / 2×），仅作用于后台节奏打点音频，方便精确打节拍；倍速仅影响播放快慢，`currentTime` 时间轴不变，打点时间依然准确
 - **保存功能**：保存到音频同目录，自动生成 `.brc` 文件
-- **导出 LRC**：点击「📤 导出 LRC」一键将 BRC 节拍歌词（`[小节:拍]`）转换为标准 LRC 时间戳（`[mm:ss.xxx]`，毫秒固定 3 位），方便上传到网易云音乐等三方平台；弹窗（最顶层 z-index:4000）提供三种导出方式：「下载到本地」浏览器直接下载 `.lrc` 文件、「保存到同目录」写入音频同目录同名 `.lrc`（与 `.brc` 共存，LRC 仅供三方平台上传用，播放器解析仍优先 BRC）、「复制导出」查看转换结果（`<code>` 标签展示 + 右上角复制图标一键复制到剪贴板）；转换复用 `BeatUtils.barBeatToTime`，自动套用当前 BPM、拍号、零点偏移与变速/变拍规则，与播放器实际播放时间完全一致
+- **导出 LRC**：点击「📤 导出 LRC」一键将 BRC 节拍歌词转换为标准 LRC 时间戳（`[mm:ss.xxx]`，毫秒固定 3 位），方便上传到网易云音乐等三方平台；逐行模式导出 `[mm:ss.xxx]歌词`，卡拉OK模式导出逐字格式 `[mm:ss.xxx]<mm:ss.xxx>字<mm:ss.xxx>字`（兼容网易云逐字歌词）；弹窗（最顶层 z-index:4000）提供三种导出方式：「下载到本地」浏览器直接下载 `.lrc` 文件、「保存到同目录」写入音频同目录同名 `.lrc`（与 `.brc` 共存，LRC 仅供三方平台上传用，播放器解析仍优先 BRC）、「复制导出」查看转换结果（`<code>` 标签展示 + 右上角复制图标一键复制到剪贴板）；转换复用 `BeatUtils.barBeatToTime`，自动套用当前 BPM、拍号、零点偏移与变速/变拍规则，与播放器实际播放时间完全一致
 
 ---
 
@@ -236,6 +240,7 @@ python app.py
 | `bgm_dir_id`            | string | 所属目录 ID，对应 `bgm_dirs[].id`，缺省回退 `default`                         |
 | `bpm`                   | number | **每分钟拍数**，支持最多 5 位小数（例：`120.005`），确保鼓点精确对齐          |
 | `beats_per_bar`         | number | 每小节拍数（常见 4/4 拍填 `4`，3/4 拍填 `3`）                                 |
+| `note_value`            | string | **音符时值（拍号分母）**，可选 `whole`(全音符/1)、`half`(二分/2)、`quarter`(四分/4，默认)、`eighth`(八分/8)、`sixteenth`(十六分/16)；决定"一拍"的时长 = `(60/BPM) × (4 ÷ 分母)`。八分音符歌曲（一拍=半拍四分音符时长）选 `eighth`，整拍网格自动按八分音符对齐 |
 | `audio_zero_bar`        | number | 音频 0s 所在小节（1-based）                                                   |
 | `audio_zero_beat`       | number | 音频 0s 所在拍号（1-based）                                                   |
 | `loop_start_bar` / `loop_start_beat`       | number+number | **循环起点**（小节:拍），每次循环回到此点                                     |
@@ -255,9 +260,10 @@ python app.py
 
 ### 时间换算公式（供参考）
 ```
-每拍毫秒  = 60000 / BPM
+音符时值系数 nvf = 4 ÷ 音符时值分母（quarter=1，eighth=0.5，half=2，whole=4，sixteenth=0.25）
+每拍毫秒  = 60000 / BPM × nvf
 绝对拍数  = (小节 - 1) * 每小节拍数 + 拍号
-相对秒数  = (当前绝对拍数 - audio_zero 绝对拍数) / (BPM / 60)
+相对秒数  = (当前绝对拍数 - audio_zero 绝对拍数) / (BPM / 60) × nvf
 ```
 管理页每张曲目卡片右侧的"**计算预览**"面板会实时输出上述所有换算。
 
@@ -339,6 +345,55 @@ proxy_status
 ---
 
 ## 📋 更新日志
+
+### v3.0.9
+- **新增音符时值（X 分音符）设置**：原先只能设置每小节拍数（拍号分子），遇到八分音符记谱的歌（一拍=半拍四分音符时长）无法正确对齐整拍网格。现新增 `note_value` 配置项，可选全音符(1)/二分音符(2)/四分音符(4，默认)/八分音符(8)/十六分音符(16)，其语义即拍号的分母；一拍时长 = `(60/BPM) × (4 ÷ 分母)`。默认 `quarter` 与原行为完全一致，向后兼容
+  - **共享逻辑 `static/beat-utils.js`**：新增 `NOTE_VALUES` 映射表与 `noteValueFraction(noteValue)` / `noteValueDenom(noteValue)` 两个转换助手；`timeToAbsBeat` / `absBeatToTime` / `timeToBarBeat` / `barBeatToTime` 四个时间↔拍换算函数均加入 `noteValueFraction`（默认 1）参数，仅缩放时间换算、不动纯拍计数逻辑
+  - **节拍计算器 `beat-calculator.js`**：小节:拍显示与下一拍调度传入 `nvf`（读取 `音符时值` 下拉框 `#beatCalcNoteValue`）
+  - **节奏打点 `beat-tapper.js`**：当前行显示、打点、跳转、BRC→LRC 导出共 5 处换算均传入 `nvf`（读取 `#beatTapperNoteValue`）
+  - **管理面板 `templates/admin.html`**：节拍计算器面板与节奏打点面板各新增「音符时值 (每拍)」下拉框
+  - **曲目设置面板 `static/admin.js`**：每首曲目设置卡片新增「音符时值 (每拍)」下拉框（走通用 `data-k="note_value"` 绑定，自动存入曲目配置）；`defaultTrack()` 新增默认 `note_value: 'quarter'`
+  - **后端 `app.py`**：`parse_brc_content` 新增 `note_value_fraction=1` 参数，节拍→秒换算按 `nvf` 缩放；`/api/lyrics` 接收前端传入的 `note_value_fraction` 并透传
+  - **播放器 `static/app.js`**：新增全局 `activeTrackNvf`，`applyTrackCfg` 据此计算 `beatsPerSec`/`beatSec`；`barBeat`/`secFromBarBeat`/`secFromBarBeatWrap` 所有时间换算均按 `nvf` 缩放；向 `/api/lyrics` 请求体补传 `note_value_fraction` 与 `note_value`；主界面拍号显示改为动态分母 `${note_value分母}`（原为固定 `/4`）
+
+### v3.0.8
+- **修复节奏打点器普通模式不自动滚动到当前行**：
+  - 根因1：`scrollToCurrentLine` 的 fallback 检查 `currentCharPos === -1` 跨迭代保留状态，普通模式（行内无 `<bar:beat>` 字标签）下只在第一个匹配行设置一次 `currentCharPos`，后续匹配行永远停留在第一个匹配行的行尾位置，播放到第 5 行仍卡在第 1 行附近
+  - 修复：新增 `foundCharInLine` 每轮重置的本地变量，普通模式行无条件覆盖 `currentCharPos` 为当前行末尾
+  - 根因2：F3 打点（`insertTagAtCursor` 普通模式）插入 `[bar:beat]` 后未调用 `_scrollEditorToCursor`，与卡拉OK模式（`insertKaraokeTagAtCursor` 末尾有 `_scrollEditorToCursor`）不一致，长歌词打点时光标/新标签落在视口外
+  - 修复：`insertTagAtCursor` 末尾补调 `this._scrollEditorToCursor(editor);`
+  - 根因3：F2 撤回（`undoTap` 普通模式）同样缺少滚动调用，撤回后当前行可能滚出视口
+  - 修复：`undoTap` 末尾补调 `this._scrollEditorToCursor(editor);`，与 `undoKaraokeTap` 行为对齐
+
+### v3.0.7
+- **优化卡拉OK逐字动画为平滑填充**：原实现用 `done`/`active`/`rest` 三段拼接 + 每字 `karaoke-char` class 切换，字符在状态间"跳跃"，无平滑过渡。改为参考旧版本示例的"整行 wipe"思路，使用 `background-clip: text` + CSS 变量 `--karaoke-progress`（0-100）实现平滑逐字填充：gradient 按进度在 `var(--lyric-highlight-color)` 与未播放色之间硬切，整行从左到右连续填充，无字符跳跃感。同时优化性能——`setLyricText` 在卡拉OK行只在切换歌词时重建 HTML 结构，每帧仅 `setProperty('--karaoke-progress', ...)` 更新 CSS 变量，避免 `innerHTML` 重写引起的重排
+- **优化滚动歌词列表逐字动画**：`openLyricModal` 渲染每行为单 `.lyric-karaoke-line` span，`updateLyricScrollList` 每帧只更新当前行的 `--karaoke-progress` 变量（已完成行设为 100，未播放行设为 0），删除原 `.karaoke-char` 逐字 span 与 class 切换逻辑
+- **优化桌面歌词逐字动画**：`desktop-lyric.html` 同步采用 `background-clip: text` + `--karaoke-progress` 方案。`updateLyric` 渲染单 span（含 `escapeHtml` 防 XSS），`updateKaraokeDisplay` 计算整行进度并 setProperty，动态描边样式规则改 targeting `.lyric-karaoke-line` 保留可配置描边宽度与发光效果；body 的 8 方向 text-shadow 描边继承到 karaoke 行，配合 gradient 填充呈现"描边 + 高亮 wipe"叠加视觉
+- **修复卡拉OK间奏停顿处全高亮闪烁**：`_computeKaraokeProgress` 在两个逐字 slot 的间隔（停顿/间奏）时循环 break 后直接 `return 100`，导致整行瞬间全高亮，下一字开始播放时又跳回部分进度。修复为按已完成字数比例返回进度（`doneLen / totalLen * 100`），间奏处进度保持不变，不会跳到 100%
+- **节奏打点器滚动定位升级为字符级**：
+  - **`scrollToCurrentLine` 播放跟随定位到当前字符**：原只滚动到行级，一行 BRC 标签过长自动换行时（如 `[1:3.66]<1:3.66>君<1:4.66>と<2:1>夏<2:2>の<2:2.66>`）当前字可能在视口外。修复为解析每行的 `<bar:beat>字` 逐字标签，找到当前时间对应的精确字符位置 `currentCharPos`，再滚动到该字符像素位置
+  - **新增 `_scrollEditorToCharPos`**：使用完善的 mirror div 测量，复制所有影响布局的 CSS 属性（`fontWeight/fontStyle/wordSpacing/wordBreak/overflowWrap/tabSize/padding/border/margin`），计算纯文本区宽度（去除 padding），处理尾部换行符；测量值超出 `scrollHeight` 时回退到字符比例法；最终边界夹紧确保视口有效
+  - **`_scrollEditorToCursor` 委托给 `_scrollEditorToCharPos`**：手动打点时光标滚动也使用统一的完善测量逻辑，避免旧 mirror 仅复制部分 CSS 属性导致换行位置测量偏差
+  - **`_scrollEditorToLine` 同步完善**：同样加入全部 CSS 属性复制 + 边界夹紧 + 行高智能定位（行过高贴近视口顶部，否则 1/3 位置）
+
+### v3.0.6
+- **修复播放自动跟随滚动失效**：音频播放到 24:1 时，编辑器对应行可能在视口外（特别是卡拉OK模式下每行字符数不同、视觉高度不等时）。原实现用 `scrollHeight / lines.length` 粗略估算行高，在逐字标签密集行与普通行混排时误差巨大。改用 mirror div 精确测量每行像素位置——创建与编辑器同字体/同宽度的离屏 div，填充目标行之前的所有文本，读取 `offsetHeight` 得到该行顶部精确位置，再 `scrollTop = lineTop - clientHeight/3` 将目标行定位到视口 1/3 处
+- **修复光标滚动 hack 不可靠**：`_scrollEditorToCursor` 原用 `blur()+focus()+setSelectionRange()` 强制浏览器滚动，Chromium 中经常无效。改为复用 `_scrollEditorToLine` 精确测量方案，根据光标位置计算所在行号后直接设 `scrollTop`
+- **mirror 复用优化**：mirror div 在首次使用时创建并缓存（`this._scrollMirror`），避免 rAF 循环每帧创建/删除 DOM 节点导致的抖动与性能损耗
+- **跟随智能暂停**：拖动进度条（seeking）时通过 `isSeeking` 标志暂停自动跟随；用户手动滚动或编辑（`input`/`scroll` 事件）时重置 `lastHighlightedLine`，不干扰用户操作
+
+### v3.0.5
+- **修复逐字打点光标不滚动**：文字过长时 F3 跳转后光标可能在视口外，需手动滑动。新增 `_scrollEditorToCursor` 辅助方法，插入字标签与撤回后通过 `blur()+focus()+setSelectionRange()` 强制浏览器把光标滚动到可见区域，长歌词自动跟随
+- **修复撤回后光标位置不合理**：撤回字标签后光标原本停在标签起始位置，无法直接重打。改为跳到"上一个节拍点"——向前找前一个 `<bar:beat>` 的 `>` 后面，若无字标签则跳到行首 `[bar:beat]` 后，方便用户重新按 F3 重打当前字
+- **修复行尾打点不跳下一行**：光标在行尾（最后一个字后）按 F3 时，原先光标停在原地。现改为：插入的 `<bar:beat>` 作为结束节拍（空内容，标记最后字的结束时间，后端 `[^<]*` 正则匹配空字符串、前端 `_buildFlattenCharSlots` 的 `!currText` 分支会把前一字的 `end` 设为该时间），光标自动跳到下一行开头；无下一行时自动创建新行
+- **新增倍速播放**：播放进度区新增倍速选择器（0.5× / 0.75× / 1× / 1.25× / 1.5× / 2×），仅作用于后台节奏打点音频，方便快速段落或慢速精打；倍速仅影响 `audio.playbackRate`，`currentTime` 时间轴不变，`tap()` 取的仍是真实时间，打点精度不受影响
+
+### v3.0.4
+- **新增卡拉OK逐字打点模式**：节奏打点编辑器新增「卡拉OK模式（逐字打点）」复选框，勾选后 F3 由"逐行打点"切换为"逐字打点"。BRC 格式扩展为 `[小节:拍]<小节:拍>字<小节:拍>字`，行首 `[bar:beat]` 标记行起点、行内 `<bar:beat>字` 标记每字起点，例如 `[1:3.66]<1:3.66>君<1:4.66>と<2:1>夏`。未勾选则保持原逐行 `[小节:拍]歌词` 格式，完全向后兼容
+- **F3 逐字打点交互**：行首无标签时首次按 F3 同时插入行起点 `[bar:beat]` 与首字 `<bar:beat>`，后续按 F3 在光标处插入字标签并自动跳到下一字前（按 Unicode 码点分割，正确处理中日韩字符与 emoji）；F2 撤回改为向前找最近的 `<bar:beat>` 字标签删除，行内无字标签时退化为撤回行首 `[bar:beat]` 标签
+- **后端解析填充 karaoke 数组**：`parse_brc_content` 扩展正则 `<bar:beat>字` 解析，填充预留已久的 `karaoke: [{time_sec, text}]` 数组；`text` 字段同时去除 `[bar:beat]` 与 `<bar:beat>` 标签得到整行文字；原文译文合并时保留原文的 karaoke 数组（译文保持整行不逐字）
+- **三层逐字渲染联动**：播放器前端 `_buildFlattenCharSlots` 逐字渲染引擎、`.karaoke-char` 高亮动画、Electron 桌面歌词 `karaoke` 字段透传三层早已就绪，本次后端填充 karaoke 数组后即刻激活毫秒级逐字高亮，无需任何前端改动
+- **导出 LRC 支持逐字格式**：卡拉OK模式下导出 LRC 自动切换为逐字格式 `[mm:ss.xxx]<mm:ss.xxx>字<mm:ss.xxx>字`，兼容网易云音乐逐字歌词上传；弹窗提示显示「逐字模式 · 已转换 X 行 / Y 字标签」；逐行模式保持原 `[mm:ss.xxx]歌词` 格式不变
 
 ### v3.0.3
 - **新增节奏打点导出 LRC 功能**：节奏打点编辑器新增「📤 导出 LRC」按钮，一键将 BRC 节拍歌词（`[小节:拍]`）转换为标准 LRC 时间戳格式（`[mm:ss.xxx]`，毫秒固定 3 位），方便上传到网易云音乐等三方歌词平台。点击后弹出最顶层弹窗（`z-index:4000`，盖过节拍计算器、节奏打点器、搜索结果等所有浮动窗口），提供三种导出方式：

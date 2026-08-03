@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
             "bgm_dir_id": DEFAULT_DIR_ID,
             "bpm": 160.0,
             "beats_per_bar": 4,
+            "note_value": "quarter",
             "audio_zero_bar": 1,
             "audio_zero_beat": 4,
             "loop_start_bar": 5,
@@ -434,12 +435,13 @@ def parse_lrc_content(content):
     return merged
 
 
-def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1, tempo_changes=None, meter_changes=None):
+def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio_zero_beat=1, tempo_changes=None, meter_changes=None, note_value_fraction=1):
     """解析 BRC（Beat-based Lyrics）文本，格式为 [小节:拍]。
     根据 BPM 和零拍偏移配置将节拍时间转换为秒数。
     支持原文译文并行：相同时间戳的连续歌词合并为原文+译文。
     支持分段变速：tempo_changes 为 [{bar, beat, bpm}] 格式的列表。
-    支持分段变拍：meter_changes 为 [{bar, beat, beats_per_bar}] 格式的列表。"""
+    支持分段变拍：meter_changes 为 [{bar, beat, beats_per_bar}] 格式的列表。
+    支持卡拉OK逐字格式：行内 <bar:beat>字 标签解析为 karaoke 数组。"""
     entries = []
     if not content:
         return entries
@@ -489,7 +491,7 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
     
     def beat_to_sec(abs_beat):
         if not tempo_list:
-            beats_per_sec = bpm / 60.0
+            beats_per_sec = bpm / (60.0 * note_value_fraction)
             return (abs_beat - zero_abs_beat) / beats_per_sec
         
         remaining = abs_beat - zero_abs_beat
@@ -503,16 +505,16 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
         for tc in tempo_list:
             if abs_beat <= tc['abs']:
                 beats_in_segment = abs_beat - prev_abs
-                time += beats_in_segment / (prev_bpm / 60.0)
+                time += beats_in_segment / (prev_bpm / 60.0 * note_value_fraction)
                 return max(0, time)
             
             beats_in_segment = tc['abs'] - prev_abs
-            time += beats_in_segment / (prev_bpm / 60.0)
+            time += beats_in_segment / (prev_bpm / 60.0 * note_value_fraction)
             prev_abs = tc['abs']
             prev_bpm = tc['bpm']
-        
+
         beats_in_segment = abs_beat - prev_abs
-        time += beats_in_segment / (prev_bpm / 60.0)
+        time += beats_in_segment / (prev_bpm / 60.0 * note_value_fraction)
         return max(0, time)
     
     lines = content.splitlines()
@@ -532,7 +534,22 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
         if not matches:
             continue
         
-        text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line).strip()
+        # 解析卡拉OK逐字标签 <bar:beat>字，填充 karaoke 数组
+        char_matches = re.findall(r'<(\d+):(\d+(?:\.\d+)?)>([^<]*)', line)
+        karaoke = []
+        for bar_str, beat_str, char_text in char_matches:
+            bar = int(bar_str)
+            beat = float(beat_str)
+            abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
+            time_sec = beat_to_sec(abs_beat)
+            karaoke.append({
+                'time_sec': max(0, time_sec),
+                'text': char_text,
+            })
+        
+        # text 同时去除 [bar:beat] 和 <bar:beat> 标签
+        text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line)
+        text = re.sub(r'<(\d+):(\d+(?:\.\d+)?)>', '', text).strip()
         if not text:
             # 只有时间标签没有文字的行（如 [8:1]），作为空行（间奏）处理
             for bar_str, beat_str in matches:
@@ -556,7 +573,7 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
             entries.append({
                 'time_sec': max(0, time_sec),
                 'text': text.strip(),
-                'karaoke': [],
+                'karaoke': list(karaoke),
                 'is_empty': False,
             })
 
@@ -592,14 +609,15 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
                 'time_sec': current['time_sec'],
                 'text': current['text'],
                 'translation': entries[i + 1]['text'],
-                'karaoke': [],
+                'karaoke': current.get('karaoke', []),
+                'translation_karaoke': entries[i + 1].get('karaoke', []),
             })
             i += 2
         else:
             merged.append({
                 'time_sec': current['time_sec'],
                 'text': current['text'],
-                'karaoke': [],
+                'karaoke': current.get('karaoke', []),
             })
             i += 1
 
@@ -947,6 +965,7 @@ def get_lyrics():
         beats_per_bar = float(data.get('beats_per_bar', 4))
         audio_zero_bar = float(data.get('audio_zero_bar', 1))
         audio_zero_beat = float(data.get('audio_zero_beat', 1))
+        note_value_fraction = float(data.get('note_value_fraction', 1))
         
         tempo_changes = data.get('tempo_changes') or []
         if not isinstance(tempo_changes, list):
@@ -961,7 +980,8 @@ def get_lyrics():
         if ext.lower() == '.brc':
             lines = parse_brc_content(content, bpm=bpm, beats_per_bar=beats_per_bar,
                                        audio_zero_bar=audio_zero_bar, audio_zero_beat=audio_zero_beat,
-                                       tempo_changes=tempo_changes, meter_changes=meter_changes)
+                                       tempo_changes=tempo_changes, meter_changes=meter_changes,
+                                       note_value_fraction=note_value_fraction)
         else:
             lines = parse_lrc_content(content)
         return jsonify({"ok": True, "data": {"lines": lines}})
