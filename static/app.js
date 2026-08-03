@@ -1508,7 +1508,7 @@ const loadLyrics = async (cfg, applyNow = true) => {
             beats_per_bar: typeof cfg.beats_per_bar === 'number' ? cfg.beats_per_bar : 4,
             audio_zero_bar: typeof cfg.audio_zero_bar === 'number' ? cfg.audio_zero_bar : 1,
             audio_zero_beat: typeof cfg.audio_zero_beat === 'number' ? cfg.audio_zero_beat : 1,
-            note_value_fraction: activeTrackNvf,
+            note_value_fraction: window.BeatUtils.noteValueFraction(cfg.note_value),
             note_value: cfg.note_value || 'quarter',
             tempo_changes: Array.isArray(cfg.tempo_changes) ? cfg.tempo_changes : [],
             meter_changes: Array.isArray(cfg.meter_changes) ? cfg.meter_changes : []
