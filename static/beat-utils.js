@@ -1,7 +1,41 @@
 (() => {
 'use strict';
 
+const NOTE_VALUES = {
+    whole:     { name: '全音符',   denom: 1,  fraction: 4 },
+    half:      { name: '二分音符', denom: 2,  fraction: 2 },
+    quarter:   { name: '四分音符', denom: 4,  fraction: 1 },
+    eighth:    { name: '八分音符', denom: 8,  fraction: 0.5 },
+    sixteenth: { name: '十六分音符', denom: 16, fraction: 0.25 }
+};
+
 const BeatUtils = {
+    NOTE_VALUES: NOTE_VALUES,
+
+    /**
+     * 音符时值 → 拍长系数（以四分音符为基准 1）。
+     * noteValue 可为键名（'quarter'）或分母数值（4）。默认四分音符 = 1。
+     * 例：八分音符 = 0.5（一拍 = 半个四分音符），全音符 = 4。
+     */
+    noteValueFraction(noteValue) {
+        if (NOTE_VALUES[noteValue]) return NOTE_VALUES[noteValue].fraction;
+        if (typeof noteValue === 'number') {
+            for (const k in NOTE_VALUES) if (NOTE_VALUES[k].denom === noteValue) return NOTE_VALUES[k].fraction;
+            return 1;
+        }
+        return 1;
+    },
+
+    /** 音符时值 → 拍号分母（用于显示，如 4/4、6/8） */
+    noteValueDenom(noteValue) {
+        if (NOTE_VALUES[noteValue]) return NOTE_VALUES[noteValue].denom;
+        if (typeof noteValue === 'number') {
+            for (const k in NOTE_VALUES) if (NOTE_VALUES[k].denom === noteValue) return noteValue;
+            return 4;
+        }
+        return 4;
+    },
+
     sortAndFilterChanges(tempoChanges, meterChanges, beatsPerBar, zeroBar, zeroBeat) {
         const sortedTempo = [...(tempoChanges || [])]
             .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
@@ -116,7 +150,7 @@ const BeatUtils = {
         return { bar: Math.max(1, currentBar), beat: beatInBar };
     },
 
-    timeToAbsBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges) {
+    timeToAbsBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction = 1) {
         const { sortedTempo, sortedMeter } = this.sortAndFilterChanges(tempoChanges, meterChanges, beatsPerBar, zeroBar, zeroBeat);
 
         const zeroAbsBeat = this.barBeatToAbs(zeroBar, zeroBeat, beatsPerBar, 1, 1, []);
@@ -133,11 +167,11 @@ const BeatUtils = {
 
         for (const change of allChanges) {
             const beatsToChange = change.abs - prevBeat;
-            const timeToChange = beatsToChange * (60 / prevBpm);
+            const timeToChange = beatsToChange * (60 / prevBpm) * noteValueFraction;
             const changeTime = prevTime + timeToChange;
 
             if (currentTime < changeTime) {
-                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
+                const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60) / noteValueFraction;
                 absBeatRaw = prevBeat + beatsElapsed;
                 break;
             }
@@ -149,14 +183,14 @@ const BeatUtils = {
             absBeatRaw = change.abs;
         }
         if (currentTime >= prevTime) {
-            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60);
+            const beatsElapsed = (currentTime - prevTime) * (prevBpm / 60) / noteValueFraction;
             absBeatRaw = prevBeat + beatsElapsed;
         }
 
         return absBeatRaw;
     },
 
-    absBeatToTime(absBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges) {
+    absBeatToTime(absBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction = 1) {
         const { sortedTempo, sortedMeter } = this.sortAndFilterChanges(tempoChanges, meterChanges, beatsPerBar, zeroBar, zeroBeat);
 
         const zeroAbsBeat = this.barBeatToAbs(zeroBar, zeroBeat, beatsPerBar, 1, 1, []);
@@ -177,7 +211,7 @@ const BeatUtils = {
             if (change.abs >= targetAbs) {
                 const beatsInSegment = targetAbs - prevBeat;
                 if (beatsInSegment > 0 && prevBpm > 0) {
-                    time += beatsInSegment * (60 / prevBpm);
+                    time += beatsInSegment * (60 / prevBpm) * noteValueFraction;
                 }
                 prevBeat = targetAbs;
                 break;
@@ -185,7 +219,7 @@ const BeatUtils = {
 
             const beatsInSegment = change.abs - prevBeat;
             if (beatsInSegment > 0 && prevBpm > 0) {
-                time += beatsInSegment * (60 / prevBpm);
+                time += beatsInSegment * (60 / prevBpm) * noteValueFraction;
             }
 
             prevBeat = change.abs;
@@ -197,7 +231,7 @@ const BeatUtils = {
         if (prevBpm <= 0) prevBpm = bpm;
         const finalBeats = targetAbs - prevBeat;
         if (finalBeats > 0) {
-            time += finalBeats * (60 / prevBpm);
+            time += finalBeats * (60 / prevBpm) * noteValueFraction;
         }
 
         return Math.max(0, time);
@@ -221,15 +255,15 @@ const BeatUtils = {
         return effective;
     },
 
-    timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges) {
-        const absBeatRaw = this.timeToAbsBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+    timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction = 1) {
+        const absBeatRaw = this.timeToAbsBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction);
         const { bar, beat } = this.absToBarBeat(absBeatRaw, beatsPerBar, zeroBar, zeroBeat, meterChanges);
         return { bar: Math.max(1, bar), beat, abs: absBeatRaw };
     },
 
-    barBeatToTime(targetBar, targetBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges) {
+    barBeatToTime(targetBar, targetBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction = 1) {
         const absBeat = this.barBeatToAbs(targetBar, targetBeat, beatsPerBar, zeroBar, zeroBeat, meterChanges);
-        return this.absBeatToTime(absBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+        return this.absBeatToTime(absBeat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, noteValueFraction);
     },
 
     exportChanges(tempoChanges, meterChanges) {

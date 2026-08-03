@@ -666,36 +666,56 @@ body.drawer-open .drawer-overlay {
     color: #999;
 }
 
-.karaoke-char {
-    transition: color 0.15s ease;
-    color: #aaa;
-    white-space: pre;
-}
-
-.karaoke-char.done {
-    color: var(--lyric-highlight-color, #66CCFF);
-    text-shadow: 0 0 4px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 40%, transparent);
-}
-
-.karaoke-char.active {
-    color: var(--lyric-highlight-color, #66CCFF);
-    text-shadow: 0 0 10px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 60%, transparent), 0 0 20px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 30%, transparent);
+/* 卡拉OK逐字填充：background-clip:text + CSS 变量实现平滑进度填充
+   - gradient 按 --karaoke-progress (0-100) 切换高亮/未播放色
+   - 多行文本也能正确显示进度（gradient 跨行应用）
+   - text-shadow 仍生效，保留发光效果 */
+.lyric-karaoke-line {
+    --karaoke-progress: 0;
+    background-image: linear-gradient(90deg,
+        var(--lyric-highlight-color, #66CCFF) 0%,
+        var(--lyric-highlight-color, #66CCFF) calc(var(--karaoke-progress) * 1%),
+        rgba(170, 170, 170, 0.65) calc(var(--karaoke-progress) * 1%),
+        rgba(170, 170, 170, 0.65) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
     font-weight: 600;
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 45%, transparent));
 }
 
-.lyric-scroll-item.active .karaoke-char {
-    color: #ccc;
+/* 歌词主区域（#lyricText）的卡拉OK行：未播放色更暗 */
+#lyricText .lyric-karaoke-line {
+    background-image: linear-gradient(90deg,
+        var(--lyric-highlight-color, #66CCFF) 0%,
+        var(--lyric-highlight-color, #66CCFF) calc(var(--karaoke-progress) * 1%),
+        var(--text-light) calc(var(--karaoke-progress) * 1%),
+        var(--text-light) 100%);
 }
 
-.lyric-scroll-item.active .karaoke-char.done {
-    color: var(--lyric-highlight-color, #66CCFF);
-    text-shadow: 0 0 4px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 40%, transparent);
+/* 滚动列表中未激活行的卡拉OK：全部显示为暗色 */
+.lyric-scroll-item:not(.active) .lyric-karaoke-line {
+    background-image: none;
+    -webkit-text-fill-color: initial;
+    color: inherit;
+    filter: none;
 }
 
-.lyric-scroll-item.active .karaoke-char.active {
-    color: var(--lyric-highlight-color, #66CCFF);
-    text-shadow: 0 0 10px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 60%, transparent), 0 0 20px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 30%, transparent);
-    font-weight: 600;
+.lyric-scroll-item.active .lyric-karaoke-line {
+    background-image: linear-gradient(90deg,
+        var(--lyric-highlight-color, #66CCFF) 0%,
+        var(--lyric-highlight-color, #66CCFF) calc(var(--karaoke-progress) * 1%),
+        rgba(204, 204, 204, 0.5) calc(var(--karaoke-progress) * 1%),
+        rgba(204, 204, 204, 0.5) 100%);
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--lyric-highlight-color, #66CCFF) 55%, transparent));
+}
+
+.lyric-scroll-item.done .lyric-karaoke-line {
+    -webkit-text-fill-color: initial;
+    color: inherit;
+    background-image: none;
+    filter: none;
 }
 
 .beat-display {

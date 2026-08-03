@@ -23,6 +23,8 @@ class BeatTapper {
         this.isPlaying = false;
         this.isSeeking = false;
         this.rafId = null;
+        this.lastHighlightedLine = -1;
+        this._scrollMirror = null;
         this.dirs = [];
         this.files = [];
         this.allFiles = [];
@@ -55,6 +57,7 @@ class BeatTapper {
         $bt('#beatTapperProgress').addEventListener('mousedown', () => this.startSeeking());
         $bt('#beatTapperProgress').addEventListener('touchstart', () => this.startSeeking());
         document.addEventListener('mouseup', () => this.stopSeeking());
+        $bt('#beatTapperPlaybackRate').addEventListener('change', (e) => this.setPlaybackRate(parseFloat(e.target.value)));
         document.addEventListener('touchend', () => this.stopSeeking());
         $bt('#beatTapperDir').addEventListener('change', () => this.loadFiles());
         $bt('#beatTapperFile').addEventListener('change', () => this.loadAudio());
@@ -63,6 +66,15 @@ class BeatTapper {
         $bt('#beatTapperSave').addEventListener('click', () => this.saveBRC());
         $bt('#beatTapperAddTempoChange').addEventListener('click', () => this.addTempoChange());
         $bt('#beatTapperAddMeterChange').addEventListener('click', () => this.addMeterChange());
+
+        // 编辑器内容变化时重置跟随滚动状态
+        $bt('#beatTapperEditor').addEventListener('input', () => {
+            this.lastHighlightedLine = -1;
+        });
+        // 用户手动滚动编辑器时重置跟随状态
+        $bt('#beatTapperEditor').addEventListener('scroll', () => {
+            this.lastHighlightedLine = -1;
+        });
 
         $bt('#beatTapperExportCfg').addEventListener('click', () => this.exportConfig());
         $bt('#beatTapperImportCfg').addEventListener('click', () => this.importConfig());
@@ -335,6 +347,15 @@ class BeatTapper {
         this.isSeeking = false;
     }
 
+    /**
+     * 设置音频播放倍速（仅影响播放快慢，不影响 currentTime 时间轴，打点时间依然准确）
+     */
+    setPlaybackRate(rate) {
+        if (!rate || isNaN(rate) || rate <= 0) return;
+        this.audio.playbackRate = rate;
+        this.setStatus(`倍速: ${rate}×`);
+    }
+
     seek(val) {
         if (!this.audio.duration) return;
         const time = (parseFloat(val) / 100) * this.audio.duration;
@@ -364,57 +385,207 @@ class BeatTapper {
 
     scrollToCurrentLine(currentTime) {
         const editor = $bt('#beatTapperEditor');
-        if (!editor) return;
+        if (!editor || this.isSeeking) return;
         
         const content = editor.value;
         const lines = content.split('\n');
         const tagRegex = /^\[(\d+):([\d.]+)\]/;
+        const charTagRegex = /<(\d+):([\d.]+)>([^<]*)/g;
         
         const bpm = parseFloat($bt('#beatTapperBpm').value) || 120;
         const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
-        
-        const zeroAbsBeat = (zeroBar - 1) * beatsPerBar + zeroBeat;
-        
-        const sortedTempoChanges = [...this.tempoChanges]
-            .filter(tc => tc.bar >= 1 && tc.beat >= 1 && tc.bpm > 0)
-            .map(tc => {
-                const abs = (tc.bar - 1) * beatsPerBar + tc.beat;
-                return { ...tc, abs };
-            })
-            .sort((a, b) => a.abs - b.abs);
-        
+        const nvf = window.BeatUtils.noteValueFraction($bt('#beatTapperNoteValue').value);
+
         const barBeatToTime = (bar, beat) => {
-                return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
-            };
+            return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf);
+        };
         
+        // 找到当前行和当前字符位置
         let currentLineIdx = -1;
-        let lastTime = -1;
-        
+        let currentCharPos = -1;
+
         for (let i = 0; i < lines.length; i++) {
-            const match = lines[i].trim().match(tagRegex);
-            if (match) {
-                const bar = parseInt(match[1]);
-                const beat = parseFloat(match[2]);
-                const time = barBeatToTime(bar, beat);
-                
-                if (time <= currentTime) {
-                    currentLineIdx = i;
-                    lastTime = time;
-                } else {
-                    break;
-                }
+            const line = lines[i];
+            const match = line.trim().match(tagRegex);
+            if (!match) continue;
+
+            const lineBar = parseInt(match[1]);
+            const lineBeat = parseFloat(match[2]);
+            const lineTime = barBeatToTime(lineBar, lineBeat);
+
+            if (lineTime > currentTime) break;
+
+            currentLineIdx = i;
+
+            // 解析当前行中的逐字标签，找到当前时间对应的字符位置
+            const beforeLine = lines.slice(0, i).join('\n');
+            let posInLine = line.indexOf(match[0]) + match[0].length;
+            let lastCharEndTime = lineTime;
+            let charMatch;
+            charTagRegex.lastIndex = posInLine;
+
+            // 修复：track whether the CURRENT line has char tags (not accumulated across iterations)
+            // 普通模式（无字标签）的行需每轮更新 currentCharPos 到行尾，
+            // 否则永远停在第一个匹配行的行尾，后续匹配行不滚动。
+            let foundCharInLine = false;
+            while ((charMatch = charTagRegex.exec(line)) !== null) {
+                foundCharInLine = true;
+                const cBar = parseInt(charMatch[1]);
+                const cBeat = parseFloat(charMatch[2]);
+                const cTime = barBeatToTime(cBar, cBeat);
+
+                if (cTime > currentTime) break;
+
+                lastCharEndTime = cTime;
+                posInLine = charMatch.index + charMatch[0].length;
+
+                // 当前字符的起始时间 <= currentTime < 下一字符的起始时间
+                // 此时 posInLine 指向当前字符之后、下一标签之前
+                currentCharPos = beforeLine.length + 1 + posInLine;
+            }
+
+            // 普通模式（本行无字标签）：滚动到当前行末尾
+            // 必须无条件覆盖之前的 currentCharPos，否则上一轮的字符位置会一直保留
+            if (!foundCharInLine) {
+                const endOfLine = beforeLine.length + 1 + line.length;
+                currentCharPos = endOfLine;
             }
         }
         
-        if (currentLineIdx >= 0 && currentLineIdx !== this.lastHighlightedLine) {
-            this.lastHighlightedLine = currentLineIdx;
-            
-            const lineHeight = editor.scrollHeight / lines.length || 20;
-            const targetScrollTop = lineHeight * currentLineIdx - editor.clientHeight / 2 + lineHeight / 2;
-            editor.scrollTop = Math.max(0, targetScrollTop);
+        // 滚动到当前字符位置（比行级别更精确，处理自动换行）
+        if (currentCharPos >= 0) {
+            this._scrollEditorToCharPos(editor, currentCharPos);
+        } else if (currentLineIdx >= 0) {
+            this._scrollEditorToLine(editor, currentLineIdx);
         }
+    }
+
+    /**
+     * 将编辑器滚动到指定字符位置，使该字符可见
+     * 使用完善的 mirror div 测量（复制全部关键 CSS 属性），精确处理自动换行
+     * 当 mirror 测量异常时回退到字符比例滚动
+     */
+    _scrollEditorToCharPos(editor, charPos) {
+        const text = editor.value;
+        const beforeChar = text.substring(0, charPos);
+        
+        if (!this._scrollMirror) {
+            this._scrollMirror = document.createElement('div');
+            this._scrollMirror.style.cssText = `position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;top:0;left:-9999px;pointer-events:none;`;
+            document.body.appendChild(this._scrollMirror);
+        }
+        const mirror = this._scrollMirror;
+        const cs = getComputedStyle(editor);
+        
+        // 复制所有影响文本布局的 CSS 属性
+        const paddingLeft = parseFloat(cs.paddingLeft) || 0;
+        const paddingRight = parseFloat(cs.paddingRight) || 0;
+        const paddingTop = parseFloat(cs.paddingTop) || 0;
+        
+        // 纯文本区宽度（去除 padding）
+        const textWidth = editor.clientWidth - paddingLeft - paddingRight;
+        mirror.style.width = textWidth + 'px';
+        mirror.style.fontFamily = cs.fontFamily;
+        mirror.style.fontSize = cs.fontSize;
+        mirror.style.fontWeight = cs.fontWeight;
+        mirror.style.fontStyle = cs.fontStyle;
+        mirror.style.lineHeight = cs.lineHeight;
+        mirror.style.letterSpacing = cs.letterSpacing;
+        mirror.style.wordSpacing = cs.wordSpacing;
+        mirror.style.textIndent = '0';
+        mirror.style.padding = '0';
+        mirror.style.border = '0';
+        mirror.style.margin = '0';
+        mirror.style.boxSizing = 'content-box';
+        mirror.style.whiteSpace = 'pre-wrap';
+        mirror.style.wordBreak = cs.wordBreak || 'break-word';
+        mirror.style.overflowWrap = cs.overflowWrap || 'break-word';
+        mirror.style.tabSize = cs.tabSize || '8';
+        
+        // 处理尾部换行符：加空格以正确渲染末尾空行
+        const displayText = beforeChar.endsWith('\n') ? beforeChar + ' ' : beforeChar;
+        mirror.textContent = displayText;
+        
+        const cursorPixelTop = mirror.offsetHeight + paddingTop;
+        
+        // 合理性检查：若测量值超出 scrollHeight，回退到比例法
+        const scrollHeight = editor.scrollHeight;
+        const clientHeight = editor.clientHeight;
+        let targetScrollTop;
+        
+        if (cursorPixelTop <= scrollHeight + 50) {
+            // 正常：将光标放在视口 1/3 位置
+            targetScrollTop = Math.max(0, cursorPixelTop - clientHeight / 3);
+        } else {
+            // 异常：回退到字符比例法
+            const ratio = charPos / Math.max(1, text.length);
+            targetScrollTop = ratio * Math.max(0, scrollHeight - clientHeight);
+        }
+        
+        // 边界检查：确保当前字符可见
+        const clampedTop = Math.max(0, Math.min(targetScrollTop, scrollHeight - clientHeight));
+        editor.scrollTop = clampedTop;
+    }
+
+    /**
+     * 将编辑器滚动到指定行，使该行位于视口中央偏上（1/3 位置）
+     * 使用完善的 mirror div 测量，复制全部关键 CSS 属性
+     */
+    _scrollEditorToLine(editor, lineIdx) {
+        if (!this._scrollMirror) {
+            this._scrollMirror = document.createElement('div');
+            this._scrollMirror.style.cssText = `position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;top:0;left:-9999px;pointer-events:none;`;
+            document.body.appendChild(this._scrollMirror);
+        }
+        const mirror = this._scrollMirror;
+        const cs = getComputedStyle(editor);
+        const paddingLeft = parseFloat(cs.paddingLeft) || 0;
+        const paddingRight = parseFloat(cs.paddingRight) || 0;
+        const paddingTop = parseFloat(cs.paddingTop) || 0;
+        
+        const textWidth = editor.clientWidth - paddingLeft - paddingRight;
+        mirror.style.width = textWidth + 'px';
+        mirror.style.fontFamily = cs.fontFamily;
+        mirror.style.fontSize = cs.fontSize;
+        mirror.style.fontWeight = cs.fontWeight;
+        mirror.style.fontStyle = cs.fontStyle;
+        mirror.style.lineHeight = cs.lineHeight;
+        mirror.style.letterSpacing = cs.letterSpacing;
+        mirror.style.wordSpacing = cs.wordSpacing;
+        mirror.style.padding = '0';
+        mirror.style.border = '0';
+        mirror.style.margin = '0';
+        mirror.style.boxSizing = 'content-box';
+        mirror.style.whiteSpace = 'pre-wrap';
+        mirror.style.wordBreak = cs.wordBreak || 'break-word';
+        mirror.style.overflowWrap = cs.overflowWrap || 'break-word';
+        mirror.style.tabSize = cs.tabSize || '8';
+        
+        const text = editor.value;
+        const lines = text.split('\n');
+        const beforeText = lines.slice(0, lineIdx).join('\n');
+        const lineContent = lines[lineIdx] || '';
+        
+        mirror.textContent = beforeText + '\n';
+        const lineTop = mirror.offsetHeight + paddingTop;
+        
+        mirror.textContent = beforeText + '\n' + lineContent;
+        const lineBottom = mirror.offsetHeight + paddingTop;
+        const lineHeight = lineBottom - lineTop;
+        const viewport = editor.clientHeight;
+        const scrollHeight = editor.scrollHeight;
+        
+        let targetScrollTop;
+        if (lineHeight > viewport * 2 / 3) {
+            targetScrollTop = Math.max(0, lineTop - 10);
+        } else {
+            targetScrollTop = Math.max(0, lineTop - viewport / 3);
+        }
+        
+        const clampedTop = Math.max(0, Math.min(targetScrollTop, scrollHeight - viewport));
+        editor.scrollTop = clampedTop;
     }
 
     updateBarDisplay(currentTime) {
@@ -422,8 +593,9 @@ class BeatTapper {
         const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
+        const nvf = window.BeatUtils.noteValueFraction($bt('#beatTapperNoteValue').value);
 
-        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf);
 
         $bt('#beatTapperBarValue').textContent = `${result.bar}:${result.beat.toFixed(2)} (小节:拍)`;
     }
@@ -446,18 +618,190 @@ class BeatTapper {
         const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
+        const nvf = window.BeatUtils.noteValueFraction($bt('#beatTapperNoteValue').value);
 
-        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf);
 
         const rhythm = RHYTHM_TYPES[this.currentRhythmType];
         const targetBeat = this.findNearestBeat(result.beat, rhythm.beats);
 
-        const tag = `[${result.bar}:${targetBeat}]`;
-        this.insertTagAtCursor(tag);
+        const isKaraoke = $bt('#beatTapperKaraokeMode')?.checked;
+        if (isKaraoke) {
+            const charTag = `<${result.bar}:${targetBeat}>`;
+            const lineTag = `[${result.bar}:${targetBeat}]`;
+            this.insertKaraokeTagAtCursor(charTag, lineTag);
+            this.setStatus(`逐字打点: ${result.bar}:${targetBeat.toFixed(2)}`);
+        } else {
+            const tag = `[${result.bar}:${targetBeat}]`;
+            this.insertTagAtCursor(tag);
+            this.setStatus(`已打点: ${result.bar}:${targetBeat.toFixed(2)}`);
+        }
 
         this.flashTapArea();
         this.updateTapCount();
-        this.setStatus(`已打点: ${result.bar}:${targetBeat.toFixed(2)}`);
+    }
+
+    /**
+     * 卡拉OK模式：计算从字符串指定位置（UTF-16 index）开始的下一个打点步长
+     * - 英文拉丁字母（A-Za-z）：连续整个单词 + 后续所有空白字符 作为一个打点单元（支持撇号 it's / don't）
+     * - 空白字符：连续跳过所有空白，直接到下一个非空白字符前
+     * - 其他字符（中日韩、数字、标点、emoji）：一个 Unicode 码点一个打点单元
+     * 返回需要跳过的 UTF-16 字符数
+     */
+    _getKaraokeStepLength(text, startIdx) {
+        if (startIdx >= text.length) return 0;
+        const firstCodePoint = text.codePointAt(startIdx);
+        const firstIsLetter =
+            (firstCodePoint >= 0x41 && firstCodePoint <= 0x5A) || // A-Z
+            (firstCodePoint >= 0x61 && firstCodePoint <= 0x7A);   // a-z
+        const firstIsWhitespace =
+            firstCodePoint === 0x20 ||                              // space
+            firstCodePoint === 0x09 ||                              // tab
+            firstCodePoint === 0x0A ||                              // newline (won't occur here but safe)
+            firstCodePoint === 0x0D;                                // CR
+        let endIdx = startIdx;
+
+        if (firstIsLetter) {
+            // 1. 吃掉整个单词（字母 + 撇号）
+            while (endIdx < text.length) {
+                const cp = text.codePointAt(endIdx);
+                const isWordChar =
+                    (cp >= 0x41 && cp <= 0x5A) ||                    // A-Z
+                    (cp >= 0x61 && cp <= 0x7A) ||                    // a-z
+                    cp === 0x27;                                      // '
+                if (isWordChar) {
+                    endIdx += cp > 0xFFFF ? 2 : 1;
+                } else {
+                    break;
+                }
+            }
+            // 2. 吃掉单词后面紧跟的全部空白字符（空格、tab、全角空格等）
+            while (endIdx < text.length) {
+                const cp = text.codePointAt(endIdx);
+                const isWs =
+                    cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D ||
+                    cp === 0x3000 ||                                  // 全角空格
+                    cp === 0x00A0;                                    // 非断空格
+                if (isWs) {
+                    endIdx += cp > 0xFFFF ? 2 : 1;
+                } else {
+                    break;
+                }
+            }
+        } else if (firstIsWhitespace) {
+            // 光标当前处于空白：连续跳过所有空白，直接到下一个非空白字符
+            while (endIdx < text.length) {
+                const cp = text.codePointAt(endIdx);
+                const isWs =
+                    cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D ||
+                    cp === 0x3000 || cp === 0x00A0;
+                if (isWs) {
+                    endIdx += cp > 0xFFFF ? 2 : 1;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // 中日韩、数字、标点、emoji 等：一个码点一步
+            endIdx += firstCodePoint > 0xFFFF ? 2 : 1;
+            // 对于非空白非字母字符，如果后面紧跟空白也一并跳过
+            while (endIdx < text.length) {
+                const cp = text.codePointAt(endIdx);
+                const isWs =
+                    cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D ||
+                    cp === 0x3000 || cp === 0x00A0;
+                if (isWs) {
+                    endIdx += cp > 0xFFFF ? 2 : 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        return Math.max(1, endIdx - startIdx);
+    }
+
+    /**
+     * 卡拉OK模式：在光标位置插入字标签 <bar:beat>
+     * - 若当前行无行首 [bar:beat] 标签，先在行首插入行起点标签，再在光标处插字标签
+     * - 光标后还有字：插入字标签，光标跳到下一个打点单元前
+     *   - 英文/拉丁字母：跳一整个单词（A-Za-z' 连续串），逐个单词打点
+     *   - 中日韩/数字/标点/emoji：跳一个码点，逐字打点
+     * - 光标后无字（行尾）：插入的标签作为结束节拍（空内容，标记最后字结束时间），光标跳到下一行开头
+     * - 插入后自动滚动编辑器到光标位置
+     */
+    insertKaraokeTagAtCursor(charTag, lineTag) {
+        const editor = $bt('#beatTapperEditor');
+        const content = editor.value;
+        let pos = editor.selectionStart;
+
+        const lineStart = content.lastIndexOf('\n', pos - 1) + 1;
+        const lineEnd = content.indexOf('\n', pos);
+        const lineEndAdjusted = lineEnd === -1 ? content.length : lineEnd;
+        const line = content.substring(lineStart, lineEndAdjusted);
+
+        const lineTagRegex = /^\[(\d+):([\d.]+)\]/;
+        const hasLineTag = lineTagRegex.test(line);
+
+        const beforeLine = content.substring(0, lineStart);
+        const afterLine = content.substring(lineEndAdjusted);
+        const insertOffset = pos - lineStart;
+        const prefixLen = hasLineTag ? 0 : lineTag.length;
+
+        // 判断光标后（跳过其他字标签）是否还有字
+        const afterCursorInLine = line.substring(insertOffset).replace(/^(<\d+:[\d.]+>)+/, '');
+        const remainingChars = [...afterCursorInLine];
+        const isEndOfLine = remainingChars.length === 0;
+
+        let newLineContent;
+        if (!hasLineTag) {
+            const lineWithLineTag = lineTag + line;
+            const adjustedOffset = insertOffset + lineTag.length;
+            newLineContent = lineWithLineTag.substring(0, adjustedOffset)
+                + charTag
+                + lineWithLineTag.substring(adjustedOffset);
+        } else {
+            newLineContent = line.substring(0, insertOffset)
+                + charTag
+                + line.substring(insertOffset);
+        }
+
+        let newContent, cursorPos;
+        if (isEndOfLine) {
+            // 已到行尾：插入的 <bar:beat> 作为结束节拍，光标跳到下一行开头
+            if (afterLine.length > 0) {
+                // 有下一行
+                newContent = beforeLine + newLineContent + afterLine;
+                cursorPos = beforeLine.length + newLineContent.length + 1; // +1 跳过 \n
+            } else {
+                // 没有下一行，创建新行
+                newContent = beforeLine + newLineContent + '\n';
+                cursorPos = newContent.length;
+            }
+        } else {
+            // 还有字：光标跳到下一个打点单元前
+            newContent = beforeLine + newLineContent + afterLine;
+            const afterInsertOffset = insertOffset + prefixLen + charTag.length;
+            const rest = newLineContent.substring(afterInsertOffset);
+            const restTrimmed = rest.replace(/^(<\d+:[\d.]+>)+/, '');
+            const skippedTagsLen = rest.length - restTrimmed.length;
+            // 智能步长：英文整词、CJK 逐字
+            const stepLen = this._getKaraokeStepLength(restTrimmed, 0);
+            cursorPos = beforeLine.length + afterInsertOffset + skippedTagsLen + stepLen;
+        }
+
+        editor.value = newContent;
+        editor.setSelectionRange(cursorPos, cursorPos);
+        this._scrollEditorToCursor(editor);
+    }
+
+    /**
+     * 滚动编辑器使光标可见（文字过长自动换行时精确滚到光标像素位置）
+     * 委托给 _scrollEditorToCharPos（统一完善的 mirror 测量 + 回退逻辑）
+     */
+    _scrollEditorToCursor(editor) {
+        const pos = editor.selectionStart;
+        this._scrollEditorToCharPos(editor, pos);
     }
 
     insertTagAtCursor(tag) {
@@ -512,6 +856,7 @@ class BeatTapper {
 
         editor.value = newContent;
         editor.setSelectionRange(cursorPos, cursorPos);
+        this._scrollEditorToCursor(editor);
     }
 
     findNearestBeat(currentBeat, targetBeats) {
@@ -531,6 +876,11 @@ class BeatTapper {
     }
 
     undoTap() {
+        const isKaraoke = $bt('#beatTapperKaraokeMode')?.checked;
+        if (isKaraoke) {
+            this.undoKaraokeTap();
+            return;
+        }
         const editor = $bt('#beatTapperEditor');
         const content = editor.value;
         const start = editor.selectionStart;
@@ -545,10 +895,69 @@ class BeatTapper {
             const newContent = content.substring(0, lineStart) + line.substring(tagLength) + content.substring(lineEnd === -1 ? content.length : lineEnd);
             editor.value = newContent;
             editor.setSelectionRange(lineStart, lineStart);
+            this._scrollEditorToCursor(editor);
             this.updateTapCount();
             this.setStatus('已撤回节拍标签');
         } else {
             this.setStatus('当前行没有节拍标签可撤回');
+        }
+    }
+
+    /**
+     * 卡拉OK模式撤回：从光标位置向前找最近的 <bar:beat> 字标签删除
+     * 撤回后光标跳到"上一个节拍点"（前一个字标签的 > 后面，或行首标签后）
+     * 若行内无字标签，则撤回行首 [bar:beat] 标签
+     */
+    undoKaraokeTap() {
+        const editor = $bt('#beatTapperEditor');
+        const content = editor.value;
+        const pos = editor.selectionStart;
+
+        const lineStart = content.lastIndexOf('\n', pos - 1) + 1;
+        const lineEnd = content.indexOf('\n', pos);
+        const lineEndAdjusted = lineEnd === -1 ? content.length : lineEnd;
+        const line = content.substring(lineStart, lineEndAdjusted);
+
+        // 在光标位置向前找最近的 <bar:beat> 字标签
+        const before = line.substring(0, pos - lineStart);
+        const charTagRegex = /<(\d+):([\d.]+)>$/;
+        const match = before.match(charTagRegex);
+        if (match) {
+            const tagStart = before.length - match[0].length;
+            const newLine = line.substring(0, tagStart) + line.substring(tagStart + match[0].length);
+            const newContent = content.substring(0, lineStart) + newLine + content.substring(lineEndAdjusted);
+            editor.value = newContent;
+            // 光标跳到上一个节拍点：向前找前一个 <bar:beat> 的 > 后面
+            const beforeTag = newLine.substring(0, tagStart);
+            const prevTagMatch = beforeTag.match(/.*<(\d+):([\d.]+)>([^<]*)$/);
+            let newCursor;
+            if (prevTagMatch) {
+                // 前一个字标签的末尾位置
+                newCursor = lineStart + beforeTag.lastIndexOf('>') + 1;
+            } else {
+                // 没有前一个字标签，跳到行首标签后（或行首）
+                const lineTagRegex = /^\[(\d+):([\d.]+)\]/;
+                const ltm = newLine.match(lineTagRegex);
+                newCursor = ltm ? lineStart + ltm[0].length : lineStart;
+            }
+            editor.setSelectionRange(newCursor, newCursor);
+            this.updateTapCount();
+            this.setStatus('已撤回字标签');
+            this._scrollEditorToCursor(editor);
+        } else {
+            // 行内无字标签，撤回行首 [bar:beat] 标签
+            const lineTagRegex = /^\[(\d+):([\d.]+)\]/;
+            if (lineTagRegex.test(line)) {
+                const tagLength = line.match(lineTagRegex)[0].length;
+                const newContent = content.substring(0, lineStart) + line.substring(tagLength) + content.substring(lineEndAdjusted);
+                editor.value = newContent;
+                editor.setSelectionRange(lineStart, lineStart);
+                this.updateTapCount();
+                this.setStatus('已撤回行首标签');
+                this._scrollEditorToCursor(editor);
+            } else {
+                this.setStatus('当前行没有可撤回的标签');
+            }
         }
     }
 
@@ -571,8 +980,9 @@ class BeatTapper {
             const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
             const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
             const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
+            const nvf = window.BeatUtils.noteValueFraction($bt('#beatTapperNoteValue').value);
 
-            const targetTime = Math.max(0, window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges));
+            const targetTime = Math.max(0, window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf));
 
             if (targetTime >= 0 && targetTime <= (this.audio.duration || Infinity)) {
                 this.audio.currentTime = targetTime;
@@ -960,7 +1370,8 @@ class BeatTapper {
 
     /**
      * 将 BRC 内容（[小节:拍]歌词）转换为 LRC 内容（[mm:ss.xxx]歌词）
-     * - 有 [bar:beat] 标签的行：转为 [mm:ss.xxx] + 歌词
+     * - 逐行模式：[bar:beat]歌词 → [mm:ss.xxx]歌词
+     * - 卡拉OK模式：[bar:beat]<bar:beat>字<bar:beat>字 → [mm:ss.xxx]<mm:ss.xxx>字<mm:ss.xxx>字
      * - 空行：保留为空行（维持歌词结构）
      * - 有内容但无标签的行：跳过（在 LRC 中无意义）
      * @returns {string|null} LRC 文本；若没有节拍标签则返回 null
@@ -970,25 +1381,50 @@ class BeatTapper {
         const beatsPerBar = parseFloat($bt('#beatTapperBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bt('#beatTapperZeroBar').value) || 1;
         const zeroBeat = parseFloat($bt('#beatTapperZeroBeat').value) || 1;
+        const nvf = window.BeatUtils.noteValueFraction($bt('#beatTapperNoteValue').value);
+        const isKaraoke = $bt('#beatTapperKaraokeMode')?.checked;
 
         const lines = content.split('\n');
-        const tagRegex = /^\[(\d+):([\d.]+)\]/;
+        const lineTagRegex = /^\[(\d+):([\d.]+)\]/;
         const result = [];
         let tagCount = 0;
 
         for (const line of lines) {
-            const match = line.match(tagRegex);
+            const match = line.match(lineTagRegex);
             if (match) {
                 const bar = parseInt(match[1]);
                 const beat = parseFloat(match[2]);
-                const lyric = line.substring(match[0].length);
                 let time = window.BeatUtils.barBeatToTime(
-                    bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat,
+                    bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, nvf,
                     this.tempoChanges, this.meterChanges
                 );
                 if (!isFinite(time) || time < 0) time = 0;
-                result.push(this.formatLrcTime(time) + lyric);
-                tagCount++;
+                const lineHead = this.formatLrcTime(time);
+
+                if (isKaraoke) {
+                    // 逐字模式：扫描行内所有 <bar:beat>字 标签
+                    const rest = line.substring(match[0].length);
+                    let charPart = '';
+                    let m;
+                    const re = /<(\d+):([\d.]+)>([^<]*)/g;
+                    while ((m = re.exec(rest)) !== null) {
+                        const cBar = parseInt(m[1]);
+                        const cBeat = parseFloat(m[2]);
+                        const cText = m[3];
+                        let cTime = window.BeatUtils.barBeatToTime(
+                            cBar, cBeat, bpm, beatsPerBar, zeroBar, zeroBeat, nvf,
+                            this.tempoChanges, this.meterChanges
+                        );
+                        if (!isFinite(cTime) || cTime < 0) cTime = 0;
+                        charPart += this.formatLrcTime(cTime).replace('[', '<').replace(']', '>') + cText;
+                    }
+                    result.push(lineHead + charPart);
+                    tagCount++;
+                } else {
+                    const lyric = line.substring(match[0].length);
+                    result.push(lineHead + lyric);
+                    tagCount++;
+                }
             } else if (line.trim() === '') {
                 result.push('');
             }
@@ -1031,7 +1467,11 @@ class BeatTapper {
 
         const hint = $bt('#exportLrcHint');
         const tagCount = (lrc.match(/^\[\d{2}:\d{2}\.\d{3}\]/gm) || []).length;
-        hint.textContent = `已转换 ${tagCount} 行节拍标签 · 文件名：${this._exportedLrcName}`;
+        const isKaraoke = $bt('#beatTapperKaraokeMode')?.checked;
+        const charCount = isKaraoke ? (lrc.match(/<\d{2}:\d{2}\.\d{3}>/g) || []).length : 0;
+        hint.textContent = isKaraoke
+            ? `逐字模式 · 已转换 ${tagCount} 行 / ${charCount} 字标签 · 文件名：${this._exportedLrcName}`
+            : `已转换 ${tagCount} 行节拍标签 · 文件名：${this._exportedLrcName}`;
 
         $bt('#exportLrcChoice').style.display = '';
         $bt('#exportLrcResult').style.display = 'none';

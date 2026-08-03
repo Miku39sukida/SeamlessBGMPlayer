@@ -22,6 +22,7 @@ const IS_MOBILE_DEVICE = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAge
 let activeTrackCfg = null;
 let beatsPerSec = 0;
 let beatSec = 0;
+let activeTrackNvf = 1;
 let zeroAbsBeat = 0;
 let startS = 0;
 let loopStartS = 0;
@@ -105,7 +106,7 @@ const barBeat = (sec) => {
     const zeroBar = activeTrackCfg.audio_zero_bar;
     const zeroBeat = activeTrackCfg.audio_zero_beat;
     
-    const result = window.BeatUtils.timeToBarBeat(sec, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+    const result = window.BeatUtils.timeToBarBeat(sec, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, activeTrackNvf);
     return result;
 };
 
@@ -117,7 +118,7 @@ const secFromBarBeat = (bar, beat) => {
     const zeroBar = activeTrackCfg.audio_zero_bar;
     const zeroBeat = activeTrackCfg.audio_zero_beat;
     
-    return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges);
+    return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, activeTrackNvf);
 };
 
 const ensureCtx = () => {
@@ -433,7 +434,7 @@ const scheduleNextLoop = () => {
 
 const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => {
     if (!extraTracksEnabled || !activeTrackCfg) return;
-    const timePerBeat = 60.0 / activeTrackCfg.bpm;
+    const timePerBeat = 60.0 / activeTrackCfg.bpm * activeTrackNvf;
     const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
     extraTracks.forEach(et => {
         if (!et.buffer || !et.gain) return;
@@ -1213,58 +1214,207 @@ const _buildFlattenCharSlots = (karaoke, lineEndTime = null) => {
     return slots;
 };
 
+// ============ 卡拉OK像素级测量（解决字符宽度差异导致的错位） ============
+// 不同字体下，汉字、数字、标点、空格的 advanceWidth 差异很大，若按字符数算百分比会错位。
+// 方案：对已渲染出的 .lyric-karaoke-line 元素，用 mirror span 精确测量每个 slot 文本结束时的像素位置，
+// 换算成 0-100 的 clip-path 百分比，实现视觉边界精确对齐。
+
+const _karaokeMirrorEl = (() => {
+    const el = document.createElement('span');
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText = 'position:fixed;top:-99999px;left:-99999px;opacity:0;pointer-events:none;' +
+        'white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;' +
+        'visibility:hidden;display:inline-block;max-width:none;';
+    // 首次写入 body
+    const mount = () => {
+        if (!el.parentNode) {
+            (document.body || document.documentElement).appendChild(el);
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount, { once: true });
+    } else {
+        mount();
+    }
+    return el;
+})();
+
+const _karaokePixelMapCache = new Map(); // key -> { slotStarts:number[], totalWidth:number, textHash, fontSig }
+
+const _TEXT_LAYOUT_PROPS = [
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+    'fontStretch', 'fontKerning', 'fontFeatureSettings', 'letterSpacing',
+    'wordSpacing', 'lineHeight', 'textRendering', 'textTransform',
+    'whiteSpace', 'overflowWrap', 'wordBreak', 'writingMode',
+    'textOrientation', 'tabSize'
+];
+
+const _copyTextLayoutStyles = (dst, src) => {
+    const cs = window.getComputedStyle(src);
+    for (const p of _TEXT_LAYOUT_PROPS) {
+        dst.style[p] = cs[p];
+    }
+    // 关键修复：mirror 绝不能继承源元素的固定宽度！
+    // 否则 inline-block 被锁定为整行宽度，无论放整行还是单个字，
+    // getBoundingClientRect().width 都返回同一个固定值 → slotStarts[1]=100% → 瞬间高亮整行。
+    // 正确做法：width:auto 让 inline-block 收缩到文本内容宽度，测量纯 advance width；
+    // white-space:pre 强制不换行（无论源元素是否换行），确保测得单行真实文本宽度。
+    dst.style.width = 'auto';
+    dst.style.maxWidth = 'none';
+    dst.style.whiteSpace = 'pre';
+};
+
+const _fnv1a = (s) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i += 1) {
+        h ^= s.charCodeAt(i);
+        h = (h * 0x01000193) >>> 0;
+    }
+    return h.toString(16);
+};
+
+/**
+ * 基于真实 DOM 元素，测量 karaoke slots 的像素级边界百分比数组。
+ * @param {HTMLElement} karaokeEl - 已渲染出文字的 .lyric-karaoke-line
+ * @param {Array} slots - _buildFlattenCharSlots 的结果
+ * @returns {number[]} slotStarts：长度 slots.length+1，slotStarts[i] 是第 i 个 slot 起点的百分比（0-100），
+ *                     slotStarts[slots.length] = 100
+ */
+const _measureKaraokePixelMap = (karaokeEl, slots) => {
+    if (!karaokeEl || !slots || slots.length === 0) return null;
+    const mirror = _karaokeMirrorEl;
+    _copyTextLayoutStyles(mirror, karaokeEl);
+
+    // 先放整行，得到总宽度
+    const fullText = slots.map(s => s.text).join('');
+    mirror.textContent = fullText;
+    const totalW = mirror.getBoundingClientRect().width;
+    if (totalW <= 0) return null;
+
+    const slotStarts = new Array(slots.length + 1);
+    slotStarts[0] = 0;
+    let prefix = '';
+    for (let i = 0; i < slots.length; i += 1) {
+        prefix += slots[i].text;
+        mirror.textContent = prefix;
+        const endW = mirror.getBoundingClientRect().width;
+        slotStarts[i + 1] = Math.min(100, (endW / totalW) * 100);
+    }
+    // 最后一个强制为 100，避免浮点误差
+    slotStarts[slotStarts.length - 1] = 100;
+    mirror.textContent = '';
+    return { slotStarts, totalWidth: totalW };
+};
+
+/**
+ * 基于像素级 slotStarts 数组计算进度（0-100）。
+ * @param {Array} slots - _buildFlattenCharSlots 结果
+ * @param {number} currentSec - 当前时间
+ * @param {{slotStarts:number[]}} pixelMap - _measureKaraokePixelMap 的结果
+ */
+const _computeKaraokeProgressPixels = (slots, currentSec, pixelMap) => {
+    const slotStarts = pixelMap.slotStarts;
+    let i = 0;
+    let donePct = 0;
+    for (i = 0; i < slots.length; i += 1) {
+        const slot = slots[i];
+        if (currentSec < slot.start - 1e-9) {
+            donePct = slotStarts[i];
+            break;
+        }
+        if (currentSec >= slot.end - 1e-9) {
+            continue;
+        }
+        const duration = slot.end - slot.start;
+        const partial = duration > 0 ? Math.min(1, Math.max(0, (currentSec - slot.start) / duration)) : 0;
+        const startPct = slotStarts[i];
+        const endPct = slotStarts[i + 1];
+        donePct = startPct + (endPct - startPct) * partial;
+        return Math.min(100, Math.max(0, donePct));
+    }
+    // 循环结束 / 间隔中：取最后完成的起点百分比
+    if (i >= slots.length) donePct = slotStarts[slots.length];
+    return Math.min(100, Math.max(0, donePct));
+};
+
+// 计算当前歌词的卡拉OK进度（0-100），用于平滑逐字填充
+// 优先使用像素级测量（若传入 karaokeEl），解决字符宽度不等的错位问题
+const _computeKaraokeProgress = (karaoke, currentSec, lineEndTime = null, karaokeEl = null) => {
+    const slots = _buildFlattenCharSlots(karaoke, lineEndTime);
+    if (slots.length === 0) return 0;
+
+    // 像素级路径：仅在传入已渲染元素时使用
+    if (karaokeEl) {
+        const fontSig = (() => {
+            const cs = window.getComputedStyle(karaokeEl);
+            return [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.letterSpacing, cs.wordSpacing, cs.lineHeight].join('|');
+        })();
+        const textStr = slots.map(s => s.text).join('');
+        const hash = _fnv1a(textStr) + '|' + _fnv1a(fontSig);
+        let map = _karaokePixelMapCache.get(hash);
+        if (!map) {
+            map = _measureKaraokePixelMap(karaokeEl, slots);
+            if (map) {
+                _karaokePixelMapCache.set(hash, map);
+                // 控制缓存规模
+                if (_karaokePixelMapCache.size > 64) {
+                    const firstKey = _karaokePixelMapCache.keys().next().value;
+                    _karaokePixelMapCache.delete(firstKey);
+                }
+            }
+        }
+        if (map) {
+            return _computeKaraokeProgressPixels(slots, currentSec, map);
+        }
+    }
+
+    // fallback：字符数算法（兜底）
+    let totalLen = 0;
+    for (const s of slots) totalLen += Array.from(s.text).length;
+    if (totalLen === 0) return 0;
+    let doneLen = 0;
+    for (let i = 0; i < slots.length; i += 1) {
+        const slot = slots[i];
+        const charCount = Array.from(slot.text).length;
+        if (currentSec < slot.start - 1e-9) break;
+        if (currentSec >= slot.end - 1e-9) {
+            doneLen += charCount;
+            continue;
+        }
+        const duration = slot.end - slot.start;
+        const partial = duration > 0 ? Math.min(1, Math.max(0, (currentSec - slot.start) / duration)) : 0;
+        const progress = (doneLen + charCount * partial) / totalLen;
+        return Math.min(1, Math.max(0, progress)) * 100;
+    }
+    return Math.min(1, Math.max(0, doneLen / totalLen)) * 100;
+};
+
 const renderLyricBody = (entry, currentSec, lineEndTime = null) => {
     if (!entry) return '<span class="lyric-empty">暂无歌词</span>';
     if (entry.is_empty) return '<div class="lyric-empty-line"></div>';
     const karaoke = Array.isArray(entry.karaoke) ? entry.karaoke : [];
     let html = '';
     if (karaoke.length > 0) {
-        const slots = _buildFlattenCharSlots(karaoke, lineEndTime);
-        let done = '';
-        let active = '';
-        let rest = '';
-        if (slots.length === 0) {
-            rest = karaoke.map((t) => t.text).join('');
-        } else {
-            let idx = slots.findIndex((s) => s.start > currentSec + 1e-9);
-            if (idx === 0) {
-                rest = slots.map((s) => s.text).join('');
-            } else if (idx === -1) {
-                const last = slots[slots.length - 1];
-                if (currentSec < last.end - 1e-9) {
-                    done = slots.slice(0, slots.length - 1).map((s) => s.text).join('');
-                    active = last.text;
-                } else {
-                    done = slots.map((s) => s.text).join('');
-                }
-            } else {
-                const currentSlot = slots[idx - 1];
-                if (currentSec < currentSlot.end - 1e-9) {
-                    done = slots.slice(0, idx - 1).map((s) => s.text).join('');
-                    active = currentSlot.text;
-                    rest = slots.slice(idx).map((s) => s.text).join('');
-                } else {
-                    done = slots.slice(0, idx).map((s) => s.text).join('');
-                    rest = slots.slice(idx).map((s) => s.text).join('');
-                }
-            }
-        }
-
-        if (active) {
-            html = `<span class="lyric-done">${escapeHtml(done)}</span><span class="lyric-active">${escapeHtml(active)}</span><span class="lyric-rest">${escapeHtml(rest)}</span>`;
-        } else if (done && rest) {
-            html = `<span class="lyric-done">${escapeHtml(done)}</span><span class="lyric-rest">${escapeHtml(rest)}</span>`;
-        } else if (done) {
-            html = `<span class="lyric-done">${escapeHtml(done)}</span>`;
-        } else {
-            html = `<span class="lyric-rest">${escapeHtml(rest)}</span>`;
-        }
+        // 卡拉OK模式：使用 background-clip:text + CSS 变量实现平滑逐字填充
+        // 多行文本也能正确显示进度（gradient 按 % 跨行应用）
+        const progress = _computeKaraokeProgress(karaoke, currentSec, lineEndTime);
+        const text = escapeHtml(entry.text || '');
+        html = `<span class="lyric-karaoke-line" style="--karaoke-progress:${progress.toFixed(2)}">${text}</span>`;
     } else {
         html = escapeHtml(entry.text || '');
     }
 
     if (entry.translation) {
-        return `<div class="lyric-main">${html}</div><div class="lyric-translation">${escapeHtml(entry.translation)}</div>`;
+        const transKaraoke = Array.isArray(entry.translation_karaoke) ? entry.translation_karaoke : [];
+        let transHtml = '';
+        if (transKaraoke.length > 0) {
+            const transProgress = _computeKaraokeProgress(transKaraoke, currentSec, lineEndTime);
+            const transText = escapeHtml(entry.translation || '');
+            transHtml = `<span class="lyric-karaoke-line" style="--karaoke-progress:${transProgress.toFixed(2)}">${transText}</span>`;
+        } else {
+            transHtml = escapeHtml(entry.translation || '');
+        }
+        return `<div class="lyric-main">${html}</div><div class="lyric-translation">${transHtml}</div>`;
     }
     return `<div class="lyric-main">${html}</div>`;
 };
@@ -1289,11 +1439,28 @@ const setLyricText = (entry, currentSec, lineEndTime = null) => {
         }
     } else {
         const hasKaraoke = Array.isArray(entry.karaoke) && entry.karaoke.length > 0;
-        const lineKey = activeLyricIndex + ':' + (hasKaraoke ? currentSec.toFixed(2) : '0');
-        if (hasKaraoke || lineKey !== _lastRenderedLyricKey) {
+        const hasTransKaraoke = Array.isArray(entry.translation_karaoke) && entry.translation_karaoke.length > 0;
+        // 卡拉OK行只在切换歌词时重建结构，每帧仅更新 --karaoke-progress 变量（避免重排）
+        const lineKey = activeLyricIndex + ':' + (hasKaraoke ? 'k' : '0') + (hasTransKaraoke ? 't' : '');
+        if (lineKey !== _lastRenderedLyricKey) {
             el.innerHTML = renderLyricBody(entry, currentSec, lineEndTime);
             el.classList.toggle('is-empty', false);
             _lastRenderedLyricKey = lineKey;
+        } else if (hasKaraoke || hasTransKaraoke) {
+            if (hasKaraoke) {
+                const karaokeLine = el.querySelector('.lyric-main .lyric-karaoke-line');
+                if (karaokeLine) {
+                    const progress = _computeKaraokeProgress(entry.karaoke, currentSec, lineEndTime, karaokeLine);
+                    karaokeLine.style.setProperty('--karaoke-progress', progress.toFixed(2));
+                }
+            }
+            if (hasTransKaraoke) {
+                const transKaraokeLine = el.querySelector('.lyric-translation .lyric-karaoke-line');
+                if (transKaraokeLine) {
+                    const transProgress = _computeKaraokeProgress(entry.translation_karaoke, currentSec, lineEndTime, transKaraokeLine);
+                    transKaraokeLine.style.setProperty('--karaoke-progress', transProgress.toFixed(2));
+                }
+            }
         }
     }
     // 桌面歌词由主进程 Node.js 定时器统一推送（绕过 Chromium 节流）
@@ -1341,6 +1508,8 @@ const loadLyrics = async (cfg, applyNow = true) => {
             beats_per_bar: typeof cfg.beats_per_bar === 'number' ? cfg.beats_per_bar : 4,
             audio_zero_bar: typeof cfg.audio_zero_bar === 'number' ? cfg.audio_zero_bar : 1,
             audio_zero_beat: typeof cfg.audio_zero_beat === 'number' ? cfg.audio_zero_beat : 1,
+            note_value_fraction: activeTrackNvf,
+            note_value: cfg.note_value || 'quarter',
             tempo_changes: Array.isArray(cfg.tempo_changes) ? cfg.tempo_changes : [],
             meter_changes: Array.isArray(cfg.meter_changes) ? cfg.meter_changes : []
         };
@@ -1383,8 +1552,9 @@ const loadLyrics = async (cfg, applyNow = true) => {
 
 const applyTrackCfg = (cfg) => {
     activeTrackCfg = cfg;
-    beatsPerSec = cfg.bpm / 60.0;
-    beatSec = 60.0 / cfg.bpm;
+    activeTrackNvf = window.BeatUtils.noteValueFraction(cfg.note_value);
+    beatsPerSec = cfg.bpm / 60.0 / activeTrackNvf;
+    beatSec = 60.0 / cfg.bpm * activeTrackNvf;
     zeroAbsBeat = (cfg.audio_zero_bar - 1) * cfg.beats_per_bar + cfg.audio_zero_beat;
     
     tempoChanges = [];
@@ -1690,7 +1860,7 @@ const playTrack = async (idx) => {
             extraTracks = [];
             extraTracksEnabled = false;
             if (!extraTracksEnabledPre || !cfg.extra_tracks || cfg.extra_tracks.length === 0) return;
-            const timePerBeat = 60.0 / cfg.bpm;
+            const timePerBeat = 60.0 / cfg.bpm * activeTrackNvf;
             const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
             const initialGain = (fadeInS > 0.0002) ? 0.0 : 1.0;
             cfg.extra_tracks.forEach((et, etIdx) => {
@@ -1761,7 +1931,7 @@ const playTrack = async (idx) => {
                     configGainNode.gain.setValueAtTime(trackGain, ctxCurrentTime);
                 }
                 
-                const timePerBeat = 60.0 / cfg.bpm;
+                const timePerBeat = 60.0 / cfg.bpm * activeTrackNvf;
                 const defZeroOffset = ((cfg.audio_zero_bar - 1) * (cfg.beats_per_bar || 4) + (cfg.audio_zero_beat - 1)) * timePerBeat;
 
                 const getStyleOffsetDiff = (sIdx) => {
@@ -2465,7 +2635,7 @@ const toggleFullLoop = () => {
 
         // 额外轨道：改 loop 属性
         if (extraTracksEnabled && extraTracks.length > 0) {
-            const timePerBeat = 60.0 / activeTrackCfg.bpm;
+            const timePerBeat = 60.0 / activeTrackCfg.bpm * activeTrackNvf;
             const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
             extraTracks.forEach(et => {
                 if (!et.buffer || !et.gain || !et.track) return;
@@ -2504,7 +2674,7 @@ const toggleFullLoop = () => {
     let fadeInStartOffset = origLoopStart;
     let sfxFadeDur = fadeDurCfg;
     if (loopSfxEnabled && loopSfxBuffer) {
-        const timePerBeat = 60.0 / activeTrackCfg.bpm;
+        const timePerBeat = 60.0 / activeTrackCfg.bpm * activeTrackNvf;
         const fadeInBeats = Number(activeTrackCfg.loop_sfx_fade_in_beats) || 4;
         const fadeInSec = fadeInBeats * timePerBeat;
         fadeInStartOffset = Math.max(0, origLoopStart - fadeInSec);
@@ -2632,7 +2802,7 @@ const toggleFullLoop = () => {
     // 2. 额外轨道同步切换
     const newExtraTracks = [];
     if (extraTracksEnabled && extraTracks.length > 0) {
-        const timePerBeat = 60.0 / activeTrackCfg.bpm;
+        const timePerBeat = 60.0 / activeTrackCfg.bpm * activeTrackNvf;
         const defZeroOffset = ((activeTrackCfg.audio_zero_bar - 1) * (activeTrackCfg.beats_per_bar || 4) + (activeTrackCfg.audio_zero_beat - 1)) * timePerBeat;
 
         extraTracks.forEach((et, etIdx) => {
@@ -2892,6 +3062,7 @@ const stopAll = async () => {
             text: '',
             translation: '',
             karaoke: [],
+            translation_karaoke: [],
             lineEndTime: null,
             currentTime: 0
         });
@@ -3040,7 +3211,7 @@ const updateInfoPanel = (idx) => {
     const modeTag = cfg.loop_mode === 'dual' ? ' [双轨]' : ' [单轨]';
     $('trackName').textContent = cfg.name + modeTag;
     $('trackBpm').textContent = `BPM: ${cfg.bpm}`;
-    $('trackSig').textContent = `拍号: ${cfg.beats_per_bar}/4`;
+    $('trackSig').textContent = `拍号: ${cfg.beats_per_bar}/${window.BeatUtils.noteValueDenom(cfg.note_value)}`;
     $('loopStartInfo').textContent = `${cfg.loop_start_bar}:${cfg.loop_start_beat}`;
     $('loopEndInfo').textContent = `${cfg.loop_end_bar}:${cfg.loop_end_beat}`;
     $('loopLenInfo').textContent = (loopDurS || 0).toFixed(3) + 's';
@@ -3295,9 +3466,10 @@ const secFromBarBeatWrap = (cfg, bar, beat) => {
     if (remaining <= 0) return 0;
     
     if (!Array.isArray(cfg.tempo_changes) || cfg.tempo_changes.length === 0) {
+        const nvf = window.BeatUtils.noteValueFraction(cfg.note_value);
         const bps = cfg.bpm / 60.0;
-        if (bps <= 0) return remaining / (120 / 60.0);
-        return remaining / bps;
+        if (bps <= 0) return remaining / (120 / 60.0) * nvf;
+        return remaining / bps * nvf;
     }
     
     const filtered = cfg.tempo_changes
@@ -3318,14 +3490,14 @@ const secFromBarBeatWrap = (cfg, bar, beat) => {
         
         if (tc.abs >= targetAbs) {
             const beatsInSegment = targetAbs - prevBeat;
-            time += beatsInSegment * (60 / prevBpm);
+            time += beatsInSegment * (60 / prevBpm) * window.BeatUtils.noteValueFraction(cfg.note_value);
             const result = Math.max(0, time);
             return isNaN(result) ? 0 : result;
         }
         
         const beatsInSegment = tc.abs - prevBeat;
         if (beatsInSegment > 0) {
-            time += beatsInSegment * (60 / prevBpm);
+            time += beatsInSegment * (60 / prevBpm) * window.BeatUtils.noteValueFraction(cfg.note_value);
         }
         
         prevBeat = tc.abs;
@@ -3335,7 +3507,7 @@ const secFromBarBeatWrap = (cfg, bar, beat) => {
     if (prevBpm <= 0) prevBpm = cfg.bpm;
     const finalBeats = targetAbs - prevBeat;
     if (finalBeats > 0) {
-        time += finalBeats * (60 / prevBpm);
+        time += finalBeats * (60 / prevBpm) * window.BeatUtils.noteValueFraction(cfg.note_value);
     }
     
     const result = Math.max(0, time);
@@ -3363,14 +3535,17 @@ const openLyricModal = () => {
             const karaoke = Array.isArray(line.karaoke) ? line.karaoke : [];
             let textHtml = text;
             if (karaoke.length > 0) {
-                const slots = _buildFlattenCharSlots(karaoke, lyricLines[idx + 1]?.time_sec || null);
-                if (slots.length > 0) {
-                    textHtml = slots.map((slot, sIdx) => 
-                        `<span class="karaoke-char" data-start="${slot.start}" data-end="${slot.end}">${escapeHtml(slot.text)}</span>`
-                    ).join('');
-                }
+                // 卡拉OK：单 span + CSS 变量 --karaoke-progress 实现平滑逐字填充
+                textHtml = `<span class="lyric-karaoke-line" style="--karaoke-progress:0">${text}</span>`;
             }
-            const translation = line.translation ? `<div class="translation">${escapeHtml(line.translation)}</div>` : '';
+            const translation = line.translation ? (() => {
+                const transKaraoke = Array.isArray(line.translation_karaoke) ? line.translation_karaoke : [];
+                let transHtml = escapeHtml(line.translation);
+                if (transKaraoke.length > 0) {
+                    transHtml = `<span class="lyric-karaoke-line" style="--karaoke-progress:0">${escapeHtml(line.translation)}</span>`;
+                }
+                return `<div class="translation">${transHtml}</div>`;
+            })() : '';
             return `<div class="lyric-scroll-item" data-idx="${idx}" data-time="${line.time_sec}">${textHtml}${translation}</div>`;
         }).join('');
     }
@@ -3421,34 +3596,32 @@ const updateLyricScrollList = () => {
     }
     
     const items = list.querySelectorAll('.lyric-scroll-item');
-    
+
     items.forEach((item, idx) => {
-        const karaokeChars = item.querySelectorAll('.karaoke-char');
-        karaokeChars.forEach(char => {
-            char.classList.remove('done', 'active');
-        });
-        
+        const karaokeLine = item.querySelector(':scope > .lyric-karaoke-line');
+        const transKaraokeLine = item.querySelector('.translation .lyric-karaoke-line');
         if (idx === currentIdx) {
             item.classList.add('active');
             item.classList.remove('done');
-            
-            karaokeChars.forEach(char => {
-                const start = parseFloat(char.dataset.start);
-                const end = parseFloat(char.dataset.end);
-                if (s >= end) {
-                    char.classList.add('done');
-                } else if (s >= start) {
-                    char.classList.add('active');
-                }
-            });
+            // 更新当前行的卡拉OK进度（平滑逐字填充）——传入真实 DOM 元素启用像素级精确对齐
+            const lineEndTime = lyricLines[idx + 1]?.time_sec || null;
+            if (karaokeLine && lyricLines[idx] && Array.isArray(lyricLines[idx].karaoke) && lyricLines[idx].karaoke.length > 0) {
+                const progress = _computeKaraokeProgress(lyricLines[idx].karaoke, s, lineEndTime, karaokeLine);
+                karaokeLine.style.setProperty('--karaoke-progress', progress.toFixed(2));
+            }
+            if (transKaraokeLine && lyricLines[idx] && Array.isArray(lyricLines[idx].translation_karaoke) && lyricLines[idx].translation_karaoke.length > 0) {
+                const transProgress = _computeKaraokeProgress(lyricLines[idx].translation_karaoke, s, lineEndTime, transKaraokeLine);
+                transKaraokeLine.style.setProperty('--karaoke-progress', transProgress.toFixed(2));
+            }
         } else if (idx < currentIdx) {
             item.classList.remove('active');
             item.classList.add('done');
-            karaokeChars.forEach(char => {
-                char.classList.add('done');
-            });
+            if (karaokeLine) karaokeLine.style.setProperty('--karaoke-progress', '100');
+            if (transKaraokeLine) transKaraokeLine.style.setProperty('--karaoke-progress', '100');
         } else {
             item.classList.remove('active', 'done');
+            if (karaokeLine) karaokeLine.style.setProperty('--karaoke-progress', '0');
+            if (transKaraokeLine) transKaraokeLine.style.setProperty('--karaoke-progress', '0');
         }
     });
     

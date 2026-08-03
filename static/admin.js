@@ -61,6 +61,7 @@ function defaultTrack() {
     bgm_dir_id: 'default',
     bpm: 120,
     beats_per_bar: 4,
+    note_value: 'quarter',
     audio_zero_bar: 1,
     audio_zero_beat: 1,
     loop_start_bar: 1,
@@ -613,6 +614,16 @@ function renderTrackCardBody(card, t) {
       <div class="field">
         <label>拍号 (每小节拍数)</label>
         <input type="number" step="1" min="1" data-k="beats_per_bar">
+      </div>
+      <div class="field">
+        <label>音符时值 (每拍)</label>
+        <select data-k="note_value">
+          <option value="whole">全音符 (1)</option>
+          <option value="half">二分音符 (2)</option>
+          <option value="quarter">四分音符 (4)</option>
+          <option value="eighth">八分音符 (8)</option>
+          <option value="sixteenth">十六分音符 (16)</option>
+        </select>
       </div>
       <div class="field">
         <label>音频增益 <span class="hint">(默认1.0；小于1降音量，大于1提音量)</span></label>

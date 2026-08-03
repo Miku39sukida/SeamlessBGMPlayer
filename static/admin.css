@@ -1837,6 +1837,71 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* ============================ 卡拉OK模式复选框 ============================ */
+.beat-tapper-rate-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.beat-tapper-rate-label {
+    font-size: 13px;
+    color: #5a4a78;
+    margin: 0;
+}
+
+.beat-tapper-rate-select {
+    padding: 3px 8px;
+    border: 1px solid rgba(138, 124, 168, 0.4);
+    border-radius: 6px;
+    background: #fff;
+    color: #5a4a78;
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+}
+
+.beat-tapper-rate-select:hover {
+    border-color: #8a7ca8;
+}
+
+.beat-tapper-rate-select:focus {
+    border-color: #8a7ca8;
+    box-shadow: 0 0 0 2px rgba(138, 124, 168, 0.2);
+}
+
+/* ============================ 卡拉OK模式复选框 ============================ */
+.beat-tapper-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    padding: 4px 0;
+}
+
+.beat-tapper-checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #8a7ca8;
+}
+
+.beat-tapper-checkbox-row span {
+    font-size: 13px;
+    color: #5a4a78;
+}
+
+.beat-tapper-hint {
+    margin: 4px 0 0 24px;
+    padding: 0;
+    font-size: 12px;
+    color: #9080a8;
+    line-height: 1.5;
+    opacity: 0.85;
+}
+
 /* ============================ 导出 LRC 弹窗（最顶层） ============================ */
 .export-lrc-modal {
     z-index: 4000;

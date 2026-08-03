@@ -382,8 +382,9 @@ class BeatCalculator {
         const beatsPerBar = parseFloat($bc('#beatCalcBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bc('#beatCalcZeroBar').value) || 1;
         const zeroBeat = parseFloat($bc('#beatCalcZeroBeat').value) || 1;
+        const nvf = window.BeatUtils.noteValueFraction($bc('#beatCalcNoteValue').value);
 
-        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges);
+        const result = window.BeatUtils.timeToBarBeat(currentTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf);
 
         $bc('#beatCalcBarValue').textContent = `${result.bar}:${result.beat.toFixed(2)} (小节:拍)`;
     }
@@ -463,9 +464,10 @@ class BeatCalculator {
         const beatsPerBar = parseFloat($bc('#beatCalcBeatsPerBar').value) || 4;
         const zeroBar = parseFloat($bc('#beatCalcZeroBar').value) || 1;
         const zeroBeat = parseFloat($bc('#beatCalcZeroBeat').value) || 1;
+        const nvf = window.BeatUtils.noteValueFraction($bc('#beatCalcNoteValue').value);
 
         const { bar: curBar, beat: curBeat } = window.BeatUtils.timeToBarBeat(
-            audioTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges
+            audioTime, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf
         );
 
         const effectiveBpb = window.BeatUtils.getEffectiveBeatsPerBar(
@@ -493,7 +495,7 @@ class BeatCalculator {
         }
 
         const nextBeatTime = window.BeatUtils.absBeatToTime(
-            nextAbs, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges
+            nextAbs, bpm, beatsPerBar, zeroBar, zeroBeat, this.tempoChanges, this.meterChanges, nvf
         );
         const timeToNextBeat = nextBeatTime - audioTime;
 
