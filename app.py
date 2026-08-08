@@ -1436,6 +1436,16 @@ async def rc_handler(websocket, path=None):
                     # 播放器（宿主）信任，无需密码
                     with _rc_lock:
                         _rc_player[0] = websocket
+                        remotes = list(_rc_remotes)
+                    # 播放器（重）连接时主动通知所有遥控器“已上线”：
+                    # 否则播放器刷新/重启后，遥控器只收到过 player_offline，会一直卡在“离线”状态，
+                    # 即便播放器早已恢复并持续推送 state/tick 也无法恢复在线显示。
+                    for r in remotes:
+                        try:
+                            await r.send(json.dumps({'type': 'player_online'}))
+                        except Exception:
+                            with _rc_lock:
+                                _rc_remotes.discard(r)
                 else:
                     return
                 try:
