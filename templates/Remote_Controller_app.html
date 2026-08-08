@@ -258,6 +258,7 @@
   'use strict';
   var RC = {
     ws: null, ready: false, tracks: [], state: null,
+    playerOnline: false,
     reconnectDelay: 1000, lastMsg: 0, wakeLock: null, wantWake: false,
     collapsedCats: {},          // 已折叠的分类名集合
     tracksVersion: 0,           // 曲目列表变更版本号
@@ -378,10 +379,24 @@
             window.location.replace('/remote');
             return;
           }
+          else if (d.type === 'player_online') {
+            // 播放器（重）连回中继：恢复在线显示并主动拉一次最新状态
+            RC.playerOnline = true;
+            setStatus('已连接', 'ok');
+            send({ type: 'request_state' });
+          }
           else if (d.type === 'tracks') { RC.tracks = d.tracks || []; RC.tracksVersion++; renderTracks(); }
-          else if (d.type === 'state') { RC.state = d; renderState(); }
-          else if (d.type === 'tick') { renderTick(d); }
-          else if (d.type === 'player_offline') { RC.state = null; setStatus('播放器离线', 'bad'); renderState(); }
+          else if (d.type === 'state') {
+            RC.state = d;
+            // 收到播放器推送的 state 即说明播放器在线；若此前被误判离线则恢复显示
+            if (!RC.playerOnline) { RC.playerOnline = true; if (RC.ready) setStatus('已连接', 'ok'); }
+            renderState();
+          }
+          else if (d.type === 'tick') {
+            if (!RC.playerOnline) { RC.playerOnline = true; if (RC.ready) setStatus('已连接', 'ok'); }
+            renderTick(d);
+          }
+          else if (d.type === 'player_offline') { RC.playerOnline = false; RC.state = null; setStatus('播放器离线', 'bad'); renderState(); }
         } catch (e) {}
       };
       ws.onclose = function () {
