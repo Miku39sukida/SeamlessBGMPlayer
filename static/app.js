@@ -1906,6 +1906,8 @@ const refreshAllTrackButtons = () => {
 const markPreloadState = (idx, state) => {
     trackPreloadState[idx] = state;
     refreshTrackButton(idx);
+    // 遥控器需要实时镜像每首曲目的预载进度（idle/loading/done），故状态变化时推送
+    rcBroadcastState();
 };
 
 const preloadTrack = async (idx) => {
@@ -4315,6 +4317,10 @@ const rcBroadcastState = () => {
             full_loop_mode: !!isFullLoopMode,
             full_loop_switching: !!fullLoopSwitching,
         },
+        // 预加载状态（仅供遥控端显示每首曲目的预载进度；仅含 loading/done，idle 不推送以精简负载）
+        preload_states: Object.keys(trackPreloadState)
+            .map(function (k) { return { idx: parseInt(k, 10), state: trackPreloadState[k] }; })
+            .filter(function (x) { return x.state !== 'idle'; }),
     });
 };
 
@@ -4339,6 +4345,10 @@ const rcBroadcastTick = () => {
         zero_bar: activeTrackCfg ? activeTrackCfg.audio_zero_bar : 1,
         zero_beat: activeTrackCfg ? activeTrackCfg.audio_zero_beat : 1,
         note_value_fraction: activeTrackNvf,
+        // 预加载状态（遥控端镜像每首曲目预载进度）
+        preload_states: Object.keys(trackPreloadState)
+            .map(function (k) { return { idx: parseInt(k, 10), state: trackPreloadState[k] }; })
+            .filter(function (x) { return x.state !== 'idle'; }),
     });
 };
 
@@ -4401,6 +4411,9 @@ const rcHandleCommand = (data) => {
         } else if (a === 'toggle_full_loop') {
             toggleFullLoop();
             rcBroadcastState();
+        } else if (a === 'preload_idx') {
+            const idx = parseInt(data.idx, 10);
+            if (!isNaN(idx) && config.tracks[idx]) preloadTrack(idx);
         } else if (a === 'set_extra_track_volume') {
             const etIdx = parseInt(data.et_idx, 10);
             const v = Math.max(0, Math.min(100, parseInt(data.volume, 10)));
