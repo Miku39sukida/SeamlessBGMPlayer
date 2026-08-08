@@ -6,13 +6,31 @@ import uuid
 import secrets
 import socket
 import mimetypes
+import time
 from functools import wraps
-from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect
+import threading
+from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect, render_template
 
 mimetypes.add_type('font/ttf', '.ttc')
 mimetypes.add_type('font/ttf', '.ttf')
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
+
+# 本地开发工具：禁用静态资源缓存，确保 app.js / style.css / beat-utils.js 等修改
+# 即时生效，避免“改了代码但浏览器仍跑旧脚本”导致遥控端/播放器行为看起来没修复。
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+
+@app.after_request
+def _no_cache_static(resp):
+    try:
+        if request.path.startswith('/static/'):
+            resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            resp.headers['Pragma'] = 'no-cache'
+            resp.headers['Expires'] = '0'
+    except Exception:
+        pass
+    return resp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BGM_DIR = os.path.join(BASE_DIR, 'BGM')
@@ -95,6 +113,30 @@ def _load_password():
             return f.read().strip() or DEFAULT_PASSWORD
     except Exception:
         return DEFAULT_PASSWORD
+
+# ============== 远程控制器访问令牌 ==============
+# 仅在密码验证后签发，用于保护 /remote_app 页面与 WebSocket 连接。
+# 令牌存于内存（服务器重启即失效），默认 12 小时有效，
+# 彻底解决“用开发者工具删掉密码框就能操控”的客户端漏洞：
+# 未经验证的浏览器根本拿不到控制界面 DOM，也无法建立可用的 WebSocket。
+REMOTE_TOKEN_TTL = 12 * 3600
+_remote_tokens = {}
+
+def _create_remote_token():
+    tok = secrets.token_hex(16)
+    _remote_tokens[tok] = time.time() + REMOTE_TOKEN_TTL
+    return tok
+
+def _valid_remote_token(tok):
+    if not tok:
+        return False
+    exp = _remote_tokens.get(tok)
+    if exp is None:
+        return False
+    if time.time() > exp:
+        _remote_tokens.pop(tok, None)
+        return False
+    return True
 
 # ============== 跨系统路径规范化工具 ==============
 def normalize_path(raw_path):
@@ -698,6 +740,17 @@ def api_logout():
 def api_session():
     return jsonify({"ok": True, "data": {"authed": bool(session.get('auth_ok'))}})
 
+@app.route('/api/remote_auth', methods=['POST'])
+def api_remote_auth():
+    """远程控制器专用：校验 password.txt 密码，成功签发访问令牌。
+    令牌用于 /remote_app 页面访问控制与 WebSocket 握手，确保“先密码、后加载页面”。"""
+    data = request.get_json(silent=True) or {}
+    pwd = (data.get('password') or '').strip()
+    if pwd != _load_password():
+        return jsonify({"ok": False, "error": "密码错误"}), 401
+    tok = _create_remote_token()
+    return jsonify({"ok": True, "token": tok})
+
 @app.route('/api/change-password', methods=['POST'])
 @login_required
 def api_change_password():
@@ -1275,6 +1328,163 @@ def lan_ips():
     hotspot_ips = [ip for ip in ips if not ip.startswith('192.168.')]
     return jsonify({"ips": ips, "wifi_ips": wifi_ips, "hotspot_ips": hotspot_ips, "port": 5001})
 
+# ===================== 远程控制 WebSocket 中继 =====================
+# 角色模型：
+#   player  —— 播放器（浏览器端 index.html），连接后向遥控器广播曲目列表与播放状态，
+#             并接收遥控器发来的控制命令（play / pause / resume / stop / set_volume 等）。
+#   remote  —— 遥控器（/remote 密码门 → /remote_app 控制界面，通常跑在手机上），连接后接收 player 的状态，
+#             并向 player 发送控制命令。
+# 中继服务只做消息转发，不感知业务逻辑；同一时间只允许一个 player 连接。
+RC_WS_PORT = int(os.environ.get('RC_WS_PORT', '8765'))
+_rc_player = [None]            # 当前连接的播放器连接（最多一个）
+_rc_remotes = set()           # 所有已连接的遥控器
+_rc_lock = threading.Lock()
+
+
+@app.route('/api/ws_info')
+def api_ws_info():
+    """返回播放器 WebSocket 中继地址，便于前端自动发现端口（尤其是跨设备访问时）。"""
+    host = request.host.split(':')[0]
+    return jsonify({
+        'host': host,
+        'ws_port': RC_WS_PORT,
+        'ws_url': f'ws://{host}:{RC_WS_PORT}',
+    })
+
+
+@app.route('/remote')
+def remote_controller():
+    """远程控制器「密码门」页面（通常跑在手机等移动设备上）。
+
+    这里只提供密码输入框，不包含任何控制界面 DOM。验证通过后由前端跳转至
+    /remote_app?token=... 加载真正的控制界面。这样未经验证的浏览器拿不到控制逻辑，
+    也就无法像旧版那样“在开发者工具里删掉密码框就直接操控”。
+    该页面为纯 HTML/JS（不含 Jinja 语法），故用 send_from_directory 从磁盘读取，
+    并加 no-store 头确保每次刷新都是最新。
+    """
+    resp = send_from_directory('templates', 'Remote_Controller.html')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+@app.route('/remote_app')
+def remote_app():
+    """远程控制器实际控制界面（含全部控制逻辑）。
+
+    必须由密码门跳转并携带有效 token，否则重定向回 /remote。
+    与 /remote（纯密码门）分离，确保“先输入密码、再加载页面”。
+    """
+    tok = request.args.get('token') or ''
+    if not _valid_remote_token(tok):
+        return redirect('/remote')
+    resp = send_from_directory('templates', 'Remote_Controller_app.html')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+async def rc_handler(websocket, path=None):
+    role = None
+    try:
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            t = data.get('type')
+            if t == 'hello':
+                role = data.get('role')
+                if role == 'remote':
+                    # 遥控器必须持有有效令牌（/api/remote_auth 在密码验证后签发），
+                    # 兼容旧的明文密码；二者皆不通过则直接拒绝连接。
+                    # 这样“先密码、后连接”，杜绝客户端绕过密码框的可能。
+                    tok = (data.get('token') or '').strip()
+                    pwd = (data.get('pwd') or '').strip()
+                    if not _valid_remote_token(tok) and pwd != _load_password():
+                        try:
+                            await websocket.send(json.dumps({'type': 'auth_failed', 'message': '令牌无效或密码错误'}))
+                        except Exception:
+                            pass
+                        return
+                    with _rc_lock:
+                        _rc_remotes.add(websocket)
+                elif role == 'player':
+                    # 播放器（宿主）信任，无需密码
+                    with _rc_lock:
+                        _rc_player[0] = websocket
+                else:
+                    return
+                try:
+                    await websocket.send(json.dumps({'type': 'welcome', 'role': role}))
+                except Exception:
+                    pass
+                continue
+            # 普通消息：按角色转发
+            if role == 'player':
+                # 播放器 -> 所有遥控器（state / tracks 等）
+                with _rc_lock:
+                    remotes = list(_rc_remotes)
+                for r in remotes:
+                    try:
+                        await r.send(message)
+                    except Exception:
+                        with _rc_lock:
+                            _rc_remotes.discard(r)
+            elif role == 'remote':
+                # 遥控器 -> 播放器（command 等）
+                with _rc_lock:
+                    p = _rc_player[0]
+                if p is not None:
+                    try:
+                        await p.send(message)
+                    except Exception:
+                        with _rc_lock:
+                            _rc_player[0] = None
+    finally:
+        with _rc_lock:
+            if role == 'player' and _rc_player[0] is websocket:
+                _rc_player[0] = None
+                for r in list(_rc_remotes):
+                    try:
+                        await r.send(json.dumps({'type': 'player_offline'}))
+                    except Exception:
+                        _rc_remotes.discard(r)
+            elif role == 'remote':
+                _rc_remotes.discard(websocket)
+
+
+def start_rc_ws_server():
+    try:
+        import websockets
+    except ImportError:
+        print("[远程控制] 未安装 websockets 库，远程控制功能不可用。请运行: pip install websockets")
+        return
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def _main():
+        try:
+            server = await websockets.serve(
+                rc_handler, '0.0.0.0', RC_WS_PORT,
+                ping_interval=20, ping_timeout=20,
+            )
+            print(f"[远程控制] WebSocket 中继已启动: ws://0.0.0.0:{RC_WS_PORT}")
+            await server.wait_closed()
+        except Exception as e:
+            print(f"[远程控制] WebSocket 服务启动失败: {e}")
+
+    try:
+        loop.run_until_complete(_main())
+    except Exception as e:
+        print(f"[远程控制] WebSocket 事件循环异常: {e}")
+
+
 if __name__ == '__main__':
     os.makedirs(BGM_DIR, exist_ok=True)
     os.makedirs('static', exist_ok=True)
@@ -1303,5 +1513,9 @@ if __name__ == '__main__':
     print("  管理:   http://127.0.0.1:5001/admin")
     print("  默认密码: admin123  (可在 password.txt 中修改)")
     print("=" * 60)
+
+    # 启动远程控制 WebSocket 中继（后台线程，独立端口）
+    rc_thread = threading.Thread(target=start_rc_ws_server, daemon=True)
+    rc_thread.start()
 
     app.run(host='0.0.0.0', port=5001, debug=False)

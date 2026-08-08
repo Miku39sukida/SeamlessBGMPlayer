@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>🎮 远程控制器</title>
+<style>
+  :root {
+    --bg: #15131c;
+    --panel: #211d2e;
+    --panel2: #2a2540;
+    --primary: #ff7aad;
+    --primary-dark: #e85d97;
+    --accent: #ffd166;
+    --text: #f3eef7;
+    --muted: #a99fb8;
+    --ok: #2f9e5b;
+    --warn: #d98324;
+    --bad: #d9534f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    overscroll-behavior: none;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 14px 14px calc(28px + env(safe-area-inset-bottom)); }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 4px 12px;
+  }
+  header h1 { font-size: 19px; margin: 0; flex: 1; }
+  .status {
+    font-size: 12px; padding: 5px 10px; border-radius: 999px;
+    background: var(--panel2); color: var(--muted); white-space: nowrap;
+  }
+  .status.ok { background: rgba(47,158,91,.2); color: #7ee2a8; }
+  .status.bad { background: rgba(217,83,79,.2); color: #ff9b98; }
+  .status.warn { background: rgba(217,131,36,.2); color: #ffc07a; }
+
+  .nowplaying {
+    background: linear-gradient(135deg, var(--panel), var(--panel2));
+    border-radius: 18px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  }
+  .np-name { font-size: 18px; font-weight: 700; min-height: 24px; word-break: break-all; }
+  .np-meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .progress-wrap { margin: 14px 0 6px; }
+  .progress-bar {
+    height: 8px; border-radius: 6px; background: #3a3350; overflow: hidden;
+  }
+  .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width .08s linear; }
+  .progress-time { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .controls { display: flex; gap: 10px; margin-top: 14px; }
+  .loop-controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 2px; }
+  .loop-controls .btn { flex: 1 1 auto; }
+  .btn {
+    flex: 1; border: none; border-radius: 14px; padding: 14px 0;
+    font-size: 16px; font-weight: 700; color: #fff; background: var(--primary);
+    cursor: pointer; transition: transform .1s, opacity .2s;
+  }
+  .btn:active { transform: scale(.96); }
+  .btn.secondary { background: var(--panel2); color: var(--text); }
+  .btn.danger { background: var(--bad); }
+  .btn:disabled { opacity: .4; cursor: default; }
+
+  .vol-wrap { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .vol-wrap span { font-size: 13px; color: var(--muted); min-width: 40px; }
+  input[type=range] { flex: 1; accent-color: var(--primary); height: 26px; }
+
+  .section-title { font-size: 13px; color: var(--muted); margin: 18px 4px 8px; }
+  .track-list { display: flex; flex-direction: column; gap: 8px; }
+  .track-item {
+    background: var(--panel); border-radius: 14px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 12px; cursor: pointer;
+    border: 2px solid transparent; transition: background .15s, border .15s;
+  }
+  .track-item:active { background: var(--panel2); }
+  .track-item.playing { border-color: var(--accent); background: rgba(255,209,102,.12); }
+  .track-item .t-idx {
+    width: 26px; height: 26px; border-radius: 8px; background: var(--panel2);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--muted); flex-shrink: 0;
+  }
+  .track-item .t-info { flex: 1; min-width: 0; }
+  .track-item .t-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track-item .t-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .track-item .t-play {
+    background: var(--primary); color: #fff; border: none; border-radius: 10px;
+    padding: 8px 12px; font-size: 14px; font-weight: 700; flex-shrink: 0;
+  }
+  .cat-title { font-size: 13px; color: var(--muted); margin: 14px 4px 6px; font-weight: 700; }
+
+  /* 可折叠分类 */
+  .cat-block { margin: 10px 0; }
+  .cat-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; background: var(--panel);
+    border-radius: 12px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  .cat-header .cat-arrow { color: var(--muted); font-size: 12px; transition: transform .2s; }
+  .cat-header.collapsed .cat-arrow { transform: rotate(-90deg); }
+  .cat-header .cat-name { flex: 1; font-size: 14px; font-weight: 700; }
+  .cat-header .cat-count { font-size: 12px; color: var(--muted); }
+  .cat-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+  .cat-header.collapsed + .cat-body { display: none; }
+
+  /* 风格切换 */
+  .style-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+  .style-btn-r {
+    background: var(--panel); color: var(--text); border: 2px solid transparent;
+    border-radius: 12px; padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: background .15s, border .15s;
+  }
+  .style-btn-r:active { background: var(--panel2); }
+  .style-btn-r.active { border-color: var(--accent); background: rgba(255,209,102,.14); color: var(--accent); }
+
+  /* 多轨混音（仅开关，与播放器面板一致，无音量条） */
+  .mix-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 4px; }
+  .mix-toggle {
+    width: 100%; box-sizing: border-box;
+    background: var(--panel2); color: var(--muted); border: none; border-radius: 12px;
+    padding: 12px 14px; font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .mix-toggle:active { background: var(--panel); }
+  .mix-toggle.active { background: var(--ok); color: #fff; }
+  .style-btn-r:disabled, .mix-toggle:disabled { opacity: .4; cursor: default; }
+
+  .wake-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 10px 12px; background: var(--panel); border-radius: 12px; }
+  .wake-row label { flex: 1; font-size: 14px; }
+  .switch { position: relative; width: 50px; height: 28px; flex-shrink: 0; }
+  .switch input { display: none; }
+  .slider-sw { position: absolute; inset: 0; background: #3a3350; border-radius: 999px; transition: .2s; }
+  .slider-sw::before { content: ''; position: absolute; width: 22px; height: 22px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider-sw { background: var(--ok); }
+  .switch input:checked + .slider-sw::before { transform: translateX(22px); }
+
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 18px; padding: 12px; background: var(--panel); border-radius: 12px; }
+  .reconnect-btn { display: none; margin-top: 10px; width: 100%; background: var(--warn); }
+
+  /* 顶部左上角菜单按钮 */
+  .menu-btn {
+    flex-shrink: 0; border: none; background: var(--panel2); color: var(--text);
+    width: 42px; height: 42px; border-radius: 12px; font-size: 20px; line-height: 1; cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  .menu-btn:active { transform: scale(.94); background: var(--primary); color: #fff; }
+
+  /* 左侧曲目抽屉（移动端竖屏尤其适用；点击左上角展开，带遮罩） */
+  .side-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    opacity: 0; visibility: hidden; transition: opacity .25s, visibility .25s; z-index: 40;
+  }
+  .side-overlay.show { opacity: 1; visibility: visible; }
+  .side-menu {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 80vw; max-width: 320px; background: var(--panel);
+    z-index: 45; transform: translateX(-100%); transition: transform .25s ease;
+    display: flex; flex-direction: column; box-shadow: 4px 0 24px rgba(0,0,0,.45);
+  }
+  .side-menu.open { transform: translateX(0); }
+  .side-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 14px 12px; font-size: 16px; font-weight: 700;
+    border-bottom: 1px solid rgba(255,255,255,.07);
+  }
+  .side-close {
+    border: none; background: transparent; color: var(--muted);
+    font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px; border-radius: 8px;
+  }
+  .side-close:active { background: var(--panel2); }
+  .side-body { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+  .side-body .track-list { gap: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <button id="menuBtn" class="menu-btn" aria-label="打开曲目列表" title="曲目列表">☰</button>
+    <h1>🎮 远程控制器</h1>
+    <span id="status" class="status">连接中…</span>
+  </header>
+
+  <div class="nowplaying">
+    <div id="npName" class="np-name">未在播放</div>
+    <div id="npMeta" class="np-meta">—</div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      <div class="progress-time"><span id="curTime">0:00</span><span id="durTime">0:00</span></div>
+    </div>
+    <div class="controls">
+      <button id="playPauseBtn" class="btn" disabled>▶ 播放</button>
+      <button id="stopBtn" class="btn danger" disabled>⏹ 停止</button>
+    </div>
+    <div class="vol-wrap">
+      <span>音量</span>
+      <input id="volume" type="range" min="0" max="100" value="100">
+      <span id="volVal" style="min-width:34px; text-align:right;">100</span>
+    </div>
+    <div class="section-title" id="loopSectionTitle" style="display:none;">🔁 循环控制</div>
+    <div class="loop-controls" id="loopControls" style="display:none;">
+      <button id="breakBtn" class="btn" disabled>⏭ 跳出循环</button>
+      <button id="fullLoopBtn" class="btn" disabled>🔄 完整循环</button>
+    </div>
+  </div>
+
+  <div class="section-title" id="styleSectionTitle" style="display:none;">🎨 风格切换</div>
+  <div id="styleList" class="style-list"></div>
+
+  <div class="section-title" id="mixSectionTitle" style="display:none;">🎼 轨道混音</div>
+  <div id="mixList" class="mix-list"></div>
+
+  <div class="wake-row">
+    <label for="wakeToggle">保持屏幕唤醒（减少后台断线）</label>
+    <span class="switch">
+      <input type="checkbox" id="wakeToggle">
+      <span class="slider-sw"></span>
+    </span>
+  </div>
+
+  <button id="reconnectBtn" class="btn reconnect-btn">🔄 重新连接</button>
+
+  <div class="hint">
+    • 在另一台设备（播放器）打开主程序并保持运行，本页会自动连接。<br>
+    • 若手机锁屏或切到后台，系统可能暂停网页导致连接断开；<b>开启“保持屏幕唤醒”</b>可降低断线概率，回到本页也会自动重连。<br>
+    • 连接地址由服务器自动发现，无需手动配置。
+  </div>
+</div>
+
+  <!-- 左侧曲目抽屉：点击左上角 ☰ 展开 -->
+  <div id="sideOverlay" class="side-overlay"></div>
+  <aside id="sideMenu" class="side-menu">
+    <div class="side-header">
+      <span>📂 曲目列表</span>
+      <button id="sideClose" class="side-close" aria-label="关闭曲目列表" title="关闭">✕</button>
+    </div>
+    <div class="side-body">
+      <div id="trackList" class="track-list"></div>
+    </div>
+  </aside>
+
+<script>
+(function () {
+  'use strict';
+  var RC = {
+    ws: null, ready: false, tracks: [], state: null,
+    reconnectDelay: 1000, lastMsg: 0, wakeLock: null, wantWake: false,
+    collapsedCats: {},          // 已折叠的分类名集合
+    tracksVersion: 0,           // 曲目列表变更版本号
+    renderedVersion: -1,        // 已渲染的曲目列表版本号
+    styleSig: '',               // 风格结构签名（仅在结构变化时重建）
+    mixSig: '',                 // 混音轨道结构签名
+    styleEls: {}, mixEls: {},   // 已渲染的风格/混音控件引用
+    bpm: null, idx: -1, name: '',  // 高频 tick 需要的最新标量
+    base: { progress: 0, wall: 0, playing: false },        // 进度基准点（收到数据包时刷新，仅取播放器推送值）
+    styleBusy: false, styleUnlockTimer: null,   // 风格切换中：禁用全部风格按钮，待播放器通知完成
+    mixBusy: {}, mixUnlockTimer: {},             // 混音轨道切换中：按轨道分别禁用/启用
+    loop: { endingEnabled: false, endingPlaying: false, broken: false, fullEnabled: false, fullMode: false, fullSwitching: false },
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $('status');
+  var playPauseBtn = $('playPauseBtn');
+  var stopBtn = $('stopBtn');
+  var volume = $('volume');
+  var volVal = $('volVal');
+  var trackListEl = $('trackList');
+  var reconnectBtn = $('reconnectBtn');
+  var breakBtn = $('breakBtn');
+  var fullLoopBtn = $('fullLoopBtn');
+  var menuBtn = $('menuBtn');
+  var sideMenu = $('sideMenu');
+  var sideOverlay = $('sideOverlay');
+  var sideClose = $('sideClose');
+
+  // 从 URL 读取服务端签发的令牌（/remote_app?token=...）；无令牌则回密码门。
+  function getToken() {
+    try {
+      var p = new URLSearchParams(location.search);
+      var t = p.get('token') || '';
+      if (t) { try { sessionStorage.setItem('rc_token', t); } catch (e) {} return t; }
+      return sessionStorage.getItem('rc_token') || '';
+    } catch (e) { return ''; }
+  }
+  var RC_TOKEN = getToken();
+
+  // 左侧曲目抽屉：点击左上角 ☰ 展开，点遮罩 / ✕ / 选曲后关闭
+  function openMenu() {
+    if (sideMenu) sideMenu.classList.add('open');
+    if (sideOverlay) sideOverlay.classList.add('show');
+  }
+  function closeMenu() {
+    if (sideMenu) sideMenu.classList.remove('open');
+    if (sideOverlay) sideOverlay.classList.remove('show');
+  }
+  if (menuBtn) menuBtn.addEventListener('click', openMenu);
+  if (sideClose) sideClose.addEventListener('click', closeMenu);
+  if (sideOverlay) sideOverlay.addEventListener('click', closeMenu);
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  function fmtTime(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function send(obj) {
+    if (RC.ws && RC.ws.readyState === WebSocket.OPEN) {
+      try { RC.ws.send(JSON.stringify(obj)); } catch (e) {}
+    }
+  }
+
+  function connect() {
+    if (typeof WebSocket === 'undefined') {
+      setStatus('浏览器不支持 WebSocket', 'bad');
+      return;
+    }
+    fetch('/api/ws_info').then(function (r) { return r.json(); }).then(function (info) {
+      var url = info.ws_url || ('ws://' + info.host + ':' + info.ws_port);
+      var ws;
+      try { ws = new WebSocket(url); } catch (e) { scheduleReconnect(); return; }
+      RC.ws = ws;
+      setStatus('连接中…', 'warn');
+      ws.onopen = function () {
+        RC.ready = true; RC.reconnectDelay = 1000; RC.lastMsg = Date.now();
+        reconnectBtn.style.display = 'none';
+        ws.send(JSON.stringify({ type: 'hello', role: 'remote', token: RC_TOKEN }));
+        send({ type: 'request_state' });
+      };
+      ws.onmessage = function (ev) {
+        RC.lastMsg = Date.now();
+        try {
+          var d = JSON.parse(ev.data);
+          if (d.type === 'welcome') { setStatus('已连接', 'ok'); }
+          else if (d.type === 'auth_failed') {
+            // 令牌失效（过期等）：清空本地令牌并重回密码门重新验证
+            try { sessionStorage.removeItem('rc_token'); } catch (e) {}
+            RC_TOKEN = '';
+            window.location.replace('/remote');
+            return;
+          }
+          else if (d.type === 'tracks') { RC.tracks = d.tracks || []; RC.tracksVersion++; renderTracks(); }
+          else if (d.type === 'state') { RC.state = d; renderState(); }
+          else if (d.type === 'tick') { renderTick(d); }
+          else if (d.type === 'player_offline') { RC.state = null; setStatus('播放器离线', 'bad'); renderState(); }
+        } catch (e) {}
+      };
+      ws.onclose = function () {
+        RC.ready = false; RC.ws = null;
+        setStatus('连接断开', 'bad');
+        scheduleReconnect();
+      };
+      ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    }).catch(function () { scheduleReconnect(); });
+  }
+
+  function scheduleReconnect() {
+    reconnectBtn.style.display = 'block';
+    setTimeout(connect, RC.reconnectDelay);
+    RC.reconnectDelay = Math.min(RC.reconnectDelay * 2, 15000);
+  }
+
+  // 心跳：定期请求状态，既能保持连接活跃，又能刷新界面
+  setInterval(function () {
+    if (RC.ready) send({ type: 'request_state' });
+  }, 15000);
+
+  // 看门狗：超过 35 秒未收到任何消息则强制重连
+  setInterval(function () {
+    if (RC.ws && (Date.now() - RC.lastMsg > 35000)) {
+      try { RC.ws.close(); } catch (e) {}
+    }
+  }, 10000);
+
+  function renderTracks() {
+    // 仅在曲目列表版本变化（或手动折叠切换）时重建，避免每秒刷新丢失折叠状态
+    if (RC.tracksVersion === RC.renderedVersion) { updateTrackHighlight(); return; }
+    trackListEl.innerHTML = '';
+    RC.renderedVersion = RC.tracksVersion;
+    if (!RC.tracks.length) {
+      var empty = document.createElement('div');
+      empty.style.color = 'var(--muted)';
+      empty.style.fontSize = '13px';
+      empty.textContent = '暂无曲目（请确认播放器已连接且曲目列表已加载）';
+      trackListEl.appendChild(empty);
+      return;
+    }
+    var curIdx = (RC.state && typeof RC.state.idx === 'number') ? RC.state.idx : -1;
+    // 按分类分组
+    var groups = {};
+    RC.tracks.forEach(function (t) {
+      var cat = t.category || '未分类';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(t);
+    });
+    Object.keys(groups).sort().forEach(function (cat) {
+      var collapsed = RC.collapsedCats[cat] !== false; // 默认折叠，除非显式展开
+      var block = document.createElement('div');
+      block.className = 'cat-block';
+
+      var header = document.createElement('div');
+      header.className = 'cat-header' + (collapsed ? ' collapsed' : '');
+      header.innerHTML =
+        '<span class="cat-arrow">▾</span>' +
+        '<span class="cat-name">' + escapeHtml(cat) + '</span>' +
+        '<span class="cat-count">' + groups[cat].length + '</span>';
+      header.addEventListener('click', function () {
+        var isCollapsed = RC.collapsedCats[cat] !== false;
+        RC.collapsedCats[cat] = !isCollapsed; // 折叠(true)→展开(false)；展开(false)→折叠(true)
+        header.classList.toggle('collapsed', !isCollapsed);
+      });
+
+      var body = document.createElement('div');
+      body.className = 'cat-body';
+      groups[cat].forEach(function (t) {
+        var item = document.createElement('div');
+        item.className = 'track-item' + (t.idx === curIdx ? ' playing' : '');
+        item.dataset.idx = String(t.idx);
+        item.innerHTML =
+          '<div class="t-idx">' + (t.idx + 1) + '</div>' +
+          '<div class="t-info"><div class="t-name">' + escapeHtml(t.name) + '</div>' +
+          '<div class="t-meta">BPM ' + (t.bpm || '-') + ' · ' + (t.loop || '') + '</div></div>' +
+          '<button class="t-play">▶</button>';
+        item.addEventListener('click', function () {
+          send({ type: 'command', action: 'play_idx', idx: t.idx });
+          closeMenu();
+        });
+        body.appendChild(item);
+      });
+
+      block.appendChild(header);
+      block.appendChild(body);
+      trackListEl.appendChild(block);
+    });
+    updateTrackHighlight();
+    // 曲目列表重建后，依据当前状态刷新风格/混音控件（它们独立于曲目列表，
+    // 不应被重建清空；这里确保高亮/开关与最新状态一致，避免“第一次同步、之后不更新”）。
+    renderStyleControls();
+    renderMixControls();
+  }
+
+  // 仅更新当前播放项高亮，避免每次状态刷新都重建列表（保留折叠状态）
+  function updateTrackHighlight() {
+    var curIdx = RC.idx;
+    var items = trackListEl.querySelectorAll('.track-item');
+    for (var i = 0; i < items.length; i++) {
+      var idx = parseInt(items[i].dataset.idx, 10);
+      if (idx === curIdx) items[i].classList.add('playing');
+      else items[i].classList.remove('playing');
+    }
+  }
+
+  // 禁用/启用风格按钮（切换中统一禁用，待播放器通知完成再启用）
+  function setStyleButtonsDisabled(disabled) {
+    Object.keys(RC.styleEls).forEach(function (k) {
+      var b = RC.styleEls[k]; if (b) b.disabled = disabled;
+    });
+  }
+  function setMixButtonDisabled(idx, disabled) {
+    var b = RC.mixEls[idx]; if (b) b.disabled = disabled;
+  }
+  // 根据播放器推送的「切换中」标记解除按钮禁用（播放器切换完成即通知）
+  function syncControlLocks() {
+    var st = RC.state;
+    if (!st) return;
+    if (RC.styleBusy && !st.style_switching) {
+      RC.styleBusy = false; setStyleButtonsDisabled(false);
+      if (RC.styleUnlockTimer) { clearTimeout(RC.styleUnlockTimer); RC.styleUnlockTimer = null; }
+    }
+    if (st.extra_tracks && st.extra_tracks.length) {
+      st.extra_tracks.forEach(function (e) {
+        if (RC.mixBusy[e.idx] && !e.switching) {
+          RC.mixBusy[e.idx] = false; setMixButtonDisabled(e.idx, false);
+          if (RC.mixUnlockTimer[e.idx]) { clearTimeout(RC.mixUnlockTimer[e.idx]); RC.mixUnlockTimer[e.idx] = null; }
+        }
+      });
+    }
+  }
+
+  // 循环/收尾控制按钮：镜像播放器「跳出循环/收尾」「完整循环/返回循环段」的文案、显隐与可用状态
+  function syncLoopControls() {
+    var st = RC.state;
+    var secTitle = $('loopSectionTitle');
+    var wrap = $('loopControls');
+    if (!st) {
+      if (secTitle) secTitle.style.display = 'none';
+      if (wrap) wrap.style.display = 'none';
+      if (breakBtn) breakBtn.disabled = true;
+      if (fullLoopBtn) fullLoopBtn.disabled = true;
+      return;
+    }
+    if (secTitle) secTitle.style.display = '';
+    if (wrap) wrap.style.display = '';
+    var L = RC.loop;
+    var hasTrack = !!(st.is_playing || st.is_paused);
+    // 跳出循环 / 收尾（breakLoop：未配收尾时为跳出，配了收尾时自动走收尾）
+    if (breakBtn) {
+      if (L.broken && L.endingEnabled) { breakBtn.textContent = '✓ 已收尾'; breakBtn.disabled = true; }
+      else if (L.broken) { breakBtn.textContent = '✓ 已跳出循环'; breakBtn.disabled = true; }
+      else if (L.endingPlaying) { breakBtn.textContent = '🎵 收尾中…'; breakBtn.disabled = true; }
+      else { breakBtn.textContent = L.endingEnabled ? '🎵 收尾' : '⏭ 跳出循环'; breakBtn.disabled = !hasTrack; }
+    }
+    // 完整循环 / 返回循环段（toggleFullLoop 一个按钮两种状态）
+    if (fullLoopBtn) {
+      if (!L.fullEnabled) { fullLoopBtn.style.display = 'none'; }
+      else {
+        fullLoopBtn.style.display = '';
+        fullLoopBtn.textContent = L.fullMode ? '↩️ 返回循环段' : '🔄 完整循环';
+        fullLoopBtn.disabled = L.fullSwitching || !hasTrack;
+      }
+    }
+  }
+
+  // 风格切换按钮组（含「默认」按钮；结构变化时才重建）
+  function renderStyleControls() {
+    var st = RC.state;
+    var styles = (st && st.styles) ? st.styles : [];
+    var titleEl = $('styleSectionTitle');
+    var listEl = $('styleList');
+    if (!styles.length) {
+      titleEl.style.display = 'none';
+      listEl.innerHTML = '';
+      RC.styleSig = '';
+      RC.styleEls = {};
+      return;
+    }
+    titleEl.style.display = '';
+    var sig = 'DEF|' + styles.map(function (s) { return s.idx + ':' + s.name; }).join('|');
+    if (sig !== RC.styleSig) {
+      RC.styleSig = sig;
+      listEl.innerHTML = '';
+      RC.styleEls = {};
+      // 「默认」风格按钮（idx = -1）：与播放器一致，可随时切回默认风格
+      var defBtn = document.createElement('button');
+      defBtn.className = 'style-btn-r';
+      defBtn.textContent = '默认';
+      defBtn.addEventListener('click', function () {
+        RC.styleBusy = true; setStyleButtonsDisabled(true);
+        if (RC.styleUnlockTimer) clearTimeout(RC.styleUnlockTimer);
+        RC.styleUnlockTimer = setTimeout(function () {
+          RC.styleBusy = false; setStyleButtonsDisabled(false); RC.styleUnlockTimer = null;
+        }, 6000);
+        send({ type: 'command', action: 'switch_style', style_idx: -1 });
+      });
+      listEl.appendChild(defBtn);
+      RC.styleEls['-1'] = defBtn;
+      styles.forEach(function (s) {
+        var btn = document.createElement('button');
+        btn.className = 'style-btn-r';
+        btn.textContent = s.name || ('风格 ' + (s.idx + 1));
+        btn.addEventListener('click', function () {
+          RC.styleBusy = true; setStyleButtonsDisabled(true);
+          if (RC.styleUnlockTimer) clearTimeout(RC.styleUnlockTimer);
+          RC.styleUnlockTimer = setTimeout(function () {
+            RC.styleBusy = false; setStyleButtonsDisabled(false); RC.styleUnlockTimer = null;
+          }, 6000);
+          send({ type: 'command', action: 'switch_style', style_idx: s.idx });
+        });
+        listEl.appendChild(btn);
+        RC.styleEls[s.idx] = btn;
+      });
+    }
+    updateStyleActive(styles);
+  }
+
+  // 高亮当前风格：有具体风格激活则高亮它，否则（currentStyleIdx === -1）高亮「默认」
+  function updateStyleActive(styles) {
+    var anyActive = false;
+    styles.forEach(function (s) { if (s.active) anyActive = true; });
+    if (RC.styleEls['-1']) RC.styleEls['-1'].classList.toggle('active', !anyActive);
+    styles.forEach(function (s) {
+      if (RC.styleEls[s.idx]) RC.styleEls[s.idx].classList.toggle('active', !!s.active);
+    });
+  }
+
+  // 多轨混音（仅开关，与播放器面板一致：无音量条；结构变化时才重建）
+  function renderMixControls() {
+    var st = RC.state;
+    var ets = (st && st.extra_tracks) ? st.extra_tracks : [];
+    var titleEl = $('mixSectionTitle');
+    var listEl = $('mixList');
+    if (!ets.length) {
+      titleEl.style.display = 'none';
+      listEl.innerHTML = '';
+      RC.mixSig = '';
+      RC.mixEls = {};
+      return;
+    }
+    titleEl.style.display = '';
+    var sig = ets.map(function (e) { return e.idx + ':' + e.name; }).join('|');
+    if (sig !== RC.mixSig) {
+      RC.mixSig = sig;
+      listEl.innerHTML = '';
+      RC.mixEls = {};
+      ets.forEach(function (e) {
+        var btn = document.createElement('button');
+        btn.className = 'mix-toggle' + (!e.muted ? ' active' : '');
+        btn.textContent = (e.muted ? '🔇 ' : '🔊 ') + (e.name || ('轨道 ' + (e.idx + 1)));
+        btn.addEventListener('click', function () {
+          RC.mixBusy[e.idx] = true; setMixButtonDisabled(e.idx, true);
+          if (RC.mixUnlockTimer[e.idx]) clearTimeout(RC.mixUnlockTimer[e.idx]);
+          RC.mixUnlockTimer[e.idx] = setTimeout(function () {
+            RC.mixBusy[e.idx] = false; setMixButtonDisabled(e.idx, false); RC.mixUnlockTimer[e.idx] = null;
+          }, 6000);
+          send({ type: 'command', action: 'toggle_extra_track', et_idx: e.idx });
+        });
+        listEl.appendChild(btn);
+        RC.mixEls[e.idx] = btn;
+      });
+    } else {
+      // 仅更新开关状态，不重建 DOM
+      ets.forEach(function (e) {
+        var btn = RC.mixEls[e.idx];
+        if (!btn) return;
+        btn.classList.toggle('active', !e.muted);
+        btn.textContent = (e.muted ? '🔇 ' : '🔊 ') + (e.name || ('轨道 ' + (e.idx + 1)));
+      });
+    }
+  }
+
+  // 收到 state/tick 时刷新进度基准点（直接采用播放器推送值，不做本地外推）。
+  function applyBasepoint(d) {
+    if (typeof d.bpm === 'number') RC.bpm = d.bpm;
+    if (typeof d.progress_sec === 'number') RC.base.progress = d.progress_sec;
+    RC.base.playing = !!d.is_playing;
+    if (d.name != null) RC.name = d.name;
+    // 同步当前播放曲目序号，供曲目列表高亮使用（此前 RC.idx 从未从状态更新，导致高亮恒为 -1）
+    if (typeof d.idx === 'number') RC.idx = d.idx;
+    if (d.loop_control) {
+      RC.loop.endingEnabled = !!d.loop_control.ending_enabled;
+      RC.loop.endingPlaying = !!d.loop_control.ending_playing;
+      RC.loop.broken = !!d.loop_control.loop_broken;
+      RC.loop.fullEnabled = !!d.loop_control.full_loop_enabled;
+      RC.loop.fullMode = !!d.loop_control.full_loop_mode;
+      RC.loop.fullSwitching = !!d.loop_control.full_loop_switching;
+    }
+  }
+
+  // 直接采用播放器推送的进度（时间），不做本地时钟外推。
+  // 遥控器只在收到 tick/state 时刷新一次（即“获取一次”），由播放器前台 60fps 推送保证流畅。
+  function renderInterp() {
+    var dur = (RC.state && RC.state.duration_sec) ? RC.state.duration_sec : 0;
+    var dispProg = RC.base.progress;    // 直接取播放器推送的进度（秒）
+    if (dur > 0 && dispProg > dur) dispProg = dur;
+
+    var pct = dur > 0 ? Math.min(100, (dispProg / dur) * 100) : 0;
+    var fill = $('progressFill'); if (fill) fill.style.width = pct + '%';
+    var curT = $('curTime'); if (curT) curT.textContent = fmtTime(dispProg);
+    var durT = $('durTime'); if (durT) durT.textContent = fmtTime(dur);
+
+    var meta = [];
+    if (RC.bpm) meta.push(RC.bpm + ' BPM');
+    $('npMeta').textContent = meta.join(' · ') || '—';
+
+    var nm = (RC.name != null && RC.name !== '') ? RC.name : '未在播放';
+    $('npName').textContent = nm;
+  }
+
+  // 注：进度（时间）直接采用播放器推送值，仅在收到 tick/state 时刷新一次，不做本地外推，
+  // 由播放器前台 60fps 推送保证流畅、后台 1 秒一次也稳定。不再显示「当前所在拍」。
+
+  function renderState() {
+    var st = RC.state;
+    if (!st) {
+      // 播放器离线：冻结进度，恢复初始态
+      RC.name = null;
+      RC.base.playing = false;
+      RC.idx = -1;
+      renderInterp();
+      if (RC.tracksVersion !== RC.renderedVersion) renderTracks();
+      else updateTrackHighlight();
+      renderStyleControls();
+      renderMixControls();
+      syncControlLocks();
+      syncLoopControls();
+      playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放';
+      stopBtn.disabled = true;
+      return;
+    }
+    applyBasepoint(st);
+    renderInterp();
+    // 曲目列表仅在版本变化或折叠切换时重建；其余仅更新高亮/控件状态
+    if (RC.tracksVersion !== RC.renderedVersion) renderTracks();
+    else updateTrackHighlight();
+    renderStyleControls();
+    renderMixControls();
+    syncControlLocks();
+    syncLoopControls();
+    var playing = st.is_playing, paused = st.is_paused;
+    if (paused) { playPauseBtn.disabled = false; playPauseBtn.textContent = '▶ 继续'; }
+    else if (playing) { playPauseBtn.disabled = false; playPauseBtn.textContent = '⏸ 暂停'; }
+    else { playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放'; }
+    stopBtn.disabled = !(playing || paused);
+    if (typeof st.volume === 'number') {
+      if (document.activeElement !== volume) volume.value = String(st.volume);
+      volVal.textContent = String(st.volume);
+    }
+  }
+
+  // 高频 tick：仅刷新插值基准点与播放按钮/音量，进度与「当前所在拍」由本地 rAF 插值渲染
+  function renderTick(d) {
+    applyBasepoint(d);
+    renderInterp();
+    var playing = !!d.is_playing, paused = !!d.is_paused;
+    if (paused) {
+      playPauseBtn.disabled = false; playPauseBtn.textContent = '▶ 继续';
+    } else if (playing) {
+      playPauseBtn.disabled = false; playPauseBtn.textContent = '⏸ 暂停';
+    } else {
+      playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放';
+    }
+    stopBtn.disabled = !(playing || paused);
+    if (typeof d.volume === 'number') {
+      if (document.activeElement !== volume) volume.value = String(d.volume);
+      volVal.textContent = String(d.volume);
+    }
+    syncLoopControls();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // 控制按钮
+  playPauseBtn.addEventListener('click', function () {
+    var st = RC.state;
+    if (st && st.is_paused) send({ type: 'command', action: 'resume' });
+    else if (st && st.is_playing) send({ type: 'command', action: 'pause' });
+  });
+  stopBtn.addEventListener('click', function () {
+    send({ type: 'command', action: 'stop' });
+  });
+  breakBtn.addEventListener('click', function () {
+    send({ type: 'command', action: 'break_loop' });
+    breakBtn.disabled = true; // 点击即禁用，待播放器通知（loop_broken/ending_playing）后由 syncLoopControls 决定终态
+  });
+  fullLoopBtn.addEventListener('click', function () {
+    send({ type: 'command', action: 'toggle_full_loop' });
+    fullLoopBtn.disabled = true; // 点击即禁用，待状态回传（full_loop_mode 翻转、full_loop_switching 解除）后恢复
+  });
+  volume.addEventListener('input', function () {
+    var v = parseInt(volume.value, 10);
+    volVal.textContent = String(v);
+    send({ type: 'command', action: 'set_volume', volume: v });
+  });
+  reconnectBtn.addEventListener('click', function () {
+    RC.reconnectDelay = 1000;
+    if (!RC.ws) connect();
+  });
+
+  // 保活 / 唤醒锁
+  var wakeToggle = $('wakeToggle');
+  function acquireWake() {
+    if (!('wakeLock' in navigator)) return;
+    navigator.wakeLock.request('screen').then(function (lock) {
+      RC.wakeLock = lock;
+      lock.addEventListener('release', function () { RC.wakeLock = null; });
+    }).catch(function () {});
+  }
+  function releaseWake() {
+    if (RC.wakeLock) { try { RC.wakeLock.release(); } catch (e) {} RC.wakeLock = null; }
+  }
+  wakeToggle.addEventListener('change', function () {
+    RC.wantWake = wakeToggle.checked;
+    if (RC.wantWake) acquireWake(); else releaseWake();
+  });
+
+  // 切后台/回前台处理
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      releaseWake();
+    } else {
+      if (RC.wantWake) acquireWake();
+      if (!RC.ready && !RC.ws) { RC.reconnectDelay = 1000; connect(); }
+      // 回到前台：立即向播放器拉一次最新状态（拍/进度由播放器推送，无需本地外推）。
+      send({ type: 'request_state' });
+    }
+  });
+  window.addEventListener('pagehide', function () { try { if (RC.ws) RC.ws.close(); } catch (e) {} });
+
+  if (!RC_TOKEN) {
+    // 兜底：/remote_app 已由服务器校验令牌，正常情况下不会走到这里；若直接访问则回密码门
+    window.location.replace('/remote');
+  } else {
+    setStatus('连接中…', 'warn');
+    connect();
+  }
+
+  // 进度/拍由播放器推送驱动：遥控器只负责在收到 tick/state 时刷新一次（见 applyBasepoint→renderInterp）。
+})();
+</script>
+</body>
+</html>
