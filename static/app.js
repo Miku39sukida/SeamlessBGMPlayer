@@ -551,10 +551,13 @@ const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfade
         });
         if (!ok) return;
 
+        // 关键：循环跳变重建额外轨道时，必须沿用 et.muted（与 et.volume）决定目标增益，
+        // 否则静音的混音轨道会在每次循环后被重新唤醒出声，导致播放器声音与遥控端静音状态不同步。
+        const etTargetGain = et.muted ? 0.0 : (et.volume != null ? et.volume : 1.0);
         try {
             newTrk.gain.gain.cancelScheduledValues(fadeStartAtCtx);
             newTrk.gain.gain.setValueAtTime(0.0, fadeStartAtCtx);
-            newTrk.gain.gain.linearRampToValueAtTime(1.0, fadeEndAtCtx);
+            newTrk.gain.gain.linearRampToValueAtTime(etTargetGain, fadeEndAtCtx);
         } catch(e) {}
 
         if (et.track && et.track.gain) {
@@ -571,6 +574,8 @@ const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfade
         newTrk.offsetDiff = offsetDiff;
         et.track = newTrk;
     });
+    // 循环跳变后主动重推一次状态，确保遥控端混音静音标记与播放器实际增益重新对齐
+    rcBroadcastState();
 };
 
 const MIN_XFADE_S = 0.002;
@@ -2110,6 +2115,7 @@ const playTrack = async (idx) => {
                         track: trk,
                         offsetDiff: offsetDiff,
                         volume: baseVol,
+                        muted: !!(et.muted),   // 默认不静音；若配置显式静音则继承，避免 undefined 歧义
                         audio_zero_bar: azb,
                         audio_zero_beat: azbt,
                     });
