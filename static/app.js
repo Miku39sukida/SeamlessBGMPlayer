@@ -7,12 +7,15 @@ const DLog = (...a) => { if (window.DEBUG_AUDIO) console.log('[AUDIO]', ...a); }
 let audioCtx = null;
 let masterGain = null;
 let configGainNode = null;
+let isPaused = false;
 // 保存用户调节的主音量（0~1），确保重建 AudioContext 时恢复，避免开始播放/换歌时回满音量
 let currentMasterVolume = 1.0;
 let audioBuffer = null;
 let audioCache = {};
 let audioLoading = {};
 let currentTrack = null;
+let currentPlayingIdx = -1;   // 当前正在播放/暂停的曲目索引（用于列表右侧按钮状态同步）
+const trackPreloadState = {}; // idx -> 'idle' | 'loading' | 'done'
 let nextTrack = null;
 let loopSchedulerTimer = null;
 let rafId = null;
@@ -63,6 +66,7 @@ let lastLyricIndex = -1;
 let currentStyleIdx = -1;
 let styleTracks = {};
 let styleSwitching = false;
+let styleSwitchTimer = null; // 风格切换“完成”定时器（允许淡变中途重新定向时清除重设）
 let multiStyleMode = false;
 
 let extraTracks = [];
@@ -121,6 +125,29 @@ const secFromBarBeat = (bar, beat) => {
     return window.BeatUtils.barBeatToTime(bar, beat, bpm, beatsPerBar, zeroBar, zeroBeat, tempoChanges, meterChanges, activeTrackNvf);
 };
 
+// 静音保活：在 destination 上挂一个增益为 0 的循环静音源，让 AudioContext 始终处于
+// 「有音频在跑」的状态，避免浏览器在页面空闲 / 切后台后把 context 自动 suspend，
+// 否则遥控器后续命令又会因为 ctx 再次 suspended 而无声。
+let keepAliveStarted = false;
+const startKeepAlive = () => {
+    if (keepAliveStarted || !audioCtx) return;
+    keepAliveStarted = true;
+    try {
+        const buf = audioCtx.createBuffer(1, Math.max(1, Math.floor(audioCtx.sampleRate * 1)), audioCtx.sampleRate);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        src.connect(g);
+        g.connect(audioCtx.destination);
+        src.start(0);
+        DLog('startKeepAlive: silent loop started');
+    } catch (e) {
+        DLog('startKeepAlive error:', e.message);
+    }
+};
+
 const ensureCtx = () => {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -130,15 +157,84 @@ const ensureCtx = () => {
         configGainNode = audioCtx.createGain();
         configGainNode.gain.value = 1.0;
         configGainNode.connect(masterGain);
+        // context 一旦进入 running（无论因何种方式解锁），立即尝试把此前因无手势而延迟的播放补上
+        audioCtx.onstatechange = () => {
+            if (audioCtx && audioCtx.state === 'running') {
+                startKeepAlive();
+                runPendingBeginPlayback();
+            }
+        };
         DLog('ensureCtx: created new AudioContext');
     }
     if (audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(e => DLog('ensureCtx: resume failed', e.message));
+        audioCtx.resume().then(() => startKeepAlive()).catch(e => DLog('ensureCtx: resume failed', e.message));
     }
     if (audioCtx.state === 'closed') {
         audioCtx = null;
         return ensureCtx();
     }
+};
+
+// 浏览器自动播放策略：AudioContext 必须在本页面发生用户手势后才能从 suspended 变 running。
+// 从遥控器（其他页面 / 手机）发来的播放命令不是本页手势，直接调度音频会无声且进度冻结。
+// 因此 playTrack 在调度前尝试让 context 进入 running；若超时仍未 running（纯手机遥控、本页尚无手势），
+// 则登记待播放并提示用户在播放器页面点击解锁，解锁后由 attachAudioUnlock / onstatechange 立即补播。
+const waitForAudioRunning = (timeoutMs = 600) => {
+    return new Promise((resolve) => {
+        if (!audioCtx) { resolve(); return; }
+        if (audioCtx.state === 'running') { resolve(); return; }
+        const start = Date.now();
+        const timer = setInterval(() => {
+            if (!audioCtx) { clearInterval(timer); resolve(); return; }
+            if (audioCtx.state === 'running') { clearInterval(timer); resolve(); return; }
+            if (Date.now() - start > timeoutMs) { clearInterval(timer); resolve(); return; }
+        }, 80);
+        // 若有手势已发生（例如用户刚点过本页面），resume 会立即生效
+        audioCtx.resume().catch(() => {});
+    });
+};
+
+// 在本页首次用户手势时解锁音频；同时隐藏「需要点击启用音频」提示。
+// 若此前因无手势而延迟了播放（pendingBeginPlayback 已登记），解锁后立刻启动音频。
+let audioUnlockAttached = false;
+let pendingBeginPlayback = null;
+
+// 统一的「补播」入口：清掉待播放标记并启动音频，多处（手势解锁 / onstatechange / 加载即解锁）共用
+const runPendingBeginPlayback = () => {
+    if (!pendingBeginPlayback) return;
+    const fn = pendingBeginPlayback;
+    pendingBeginPlayback = null;
+    try { fn(); } catch (e) { DLog('pendingBeginPlayback err:', e.message); }
+    hideAudioLockHint();
+};
+
+const attachAudioUnlock = () => {
+    if (audioUnlockAttached) return;
+    audioUnlockAttached = true;
+    const handler = () => {
+        ensureCtx();
+        if (!audioCtx) return;
+        if (audioCtx.state !== 'running') {
+            audioCtx.resume().then(() => {
+                runPendingBeginPlayback();
+                hideAudioLockHint();
+            }).catch(() => {});
+        } else {
+            runPendingBeginPlayback();
+            hideAudioLockHint();
+        }
+    };
+    ['pointerdown', 'keydown', 'touchstart'].forEach((ev) =>
+        document.addEventListener(ev, handler, { passive: true }));
+};
+
+const showAudioLockHint = () => {
+    const el = document.getElementById('audioLockHint');
+    if (el) el.hidden = false;
+};
+const hideAudioLockHint = () => {
+    const el = document.getElementById('audioLockHint');
+    if (el) el.hidden = true;
 };
 
 const createTrack = (label) => ({
@@ -346,6 +442,8 @@ const getRawPlaybackPos = (track) => {
 
 const scheduleNextLoop = () => {
     if (!currentTrack || !audioCtx) return;
+    // 暂停期间不调度循环边界（上下文已 suspend，时钟冻结，恢复后统一重启）
+    if (isPaused) return;
     // 原生循环模式（移动端）：source.loop = true 时由 Web Audio API 音频线程
     // 自行处理循环，完全不依赖 setTimeout，免疫后台节流
     if (currentTrack.source && currentTrack.source.loop) {
@@ -1635,12 +1733,207 @@ const applyTrackCfg = (cfg) => {
     syncLyricCacheToMain();
 };
 
+// ===== 曲目资源预加载（供「预载」按钮与播放复用，实现秒播） =====
+const preloadedTracks = {};
+
+const loadTrackAssets = async (cfg) => {
+    const loadedLyricLines = await loadLyrics(cfg, false);
+
+    const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
+    const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
+    const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
+    const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
+    const styleBuffers = {};
+    let mainBuffer = null;
+    let extraTrackBuffers = [];
+    let endingBufferPre = null;
+    let loopSfxBufferPre = null;
+
+    const allLoadPromises = [];
+
+    // 主音频
+    allLoadPromises.push((async () => {
+        try {
+            mainBuffer = await loadBuffer(cfg.filename, cfg.bgm_dir_id || '');
+            DLog('preload main track done');
+        } catch(e) {
+            DLog('preload main track failed:', e.message);
+        }
+    })());
+
+    // 多风格
+    if (multiStyleModePre) {
+        cfg.styles.forEach((style, sIdx) => {
+            if (!style.filename) return;
+            allLoadPromises.push((async () => {
+                try {
+                    const sfilename = style.filename || cfg.filename;
+                    const sdirId = style.bgm_dir_id || cfg.bgm_dir_id || '';
+                    const buf = await loadBuffer(sfilename, sdirId);
+                    styleBuffers[sIdx] = buf;
+                    DLog(`preload style ${sIdx} (${style.name}) done`);
+                } catch(e) {
+                    DLog(`preload style ${sIdx} failed: ${e.message}`);
+                }
+            })());
+        });
+    }
+    // 额外轨道
+    if (extraTracksEnabledPre) {
+        cfg.extra_tracks.forEach((et, etIdx) => {
+            if (!et.filename) return;
+            allLoadPromises.push((async () => {
+                try {
+                    const etfn = et.filename;
+                    const etdir = et.dir_id || cfg.bgm_dir_id || '';
+                    const buf = await loadBuffer(etfn, etdir);
+                    extraTrackBuffers[etIdx] = buf;
+                    DLog(`preload extra track ${etIdx} (${et.name}) done`);
+                } catch(e) {
+                    DLog(`preload extra track ${etIdx} failed: ${e.message}`);
+                }
+            })());
+        });
+    }
+    // 收尾音频
+    if (endingEnabledPre) {
+        allLoadPromises.push((async () => {
+            try {
+                const efn = cfg.ending_filename;
+                const edir = cfg.ending_dir_id || cfg.bgm_dir_id || '';
+                endingBufferPre = await loadBuffer(efn, edir);
+                DLog('preload ending audio done');
+            } catch(e) {
+                DLog('preload ending audio failed: ' + e.message);
+            }
+        })());
+    }
+    // 循环提示音效
+    if (loopSfxEnabledPre) {
+        allLoadPromises.push((async () => {
+            try {
+                const lfn = cfg.loop_sfx_filename;
+                const ldir = cfg.loop_sfx_dir_id || cfg.bgm_dir_id || '';
+                loopSfxBufferPre = await loadBuffer(lfn, ldir);
+                DLog('preload loop sfx done');
+            } catch(e) {
+                DLog('preload loop sfx failed: ' + e.message);
+            }
+        })());
+    }
+
+    // 前奏音频
+    const introEnabledPre = !!(cfg.intro_enabled && cfg.intro_filename);
+    let introBufferPre = null;
+    if (introEnabledPre) {
+        allLoadPromises.push((async () => {
+            try {
+                const ifn = cfg.intro_filename;
+                const idir = cfg.intro_dir_id || cfg.bgm_dir_id || '';
+                introBufferPre = await loadBuffer(ifn, idir);
+                DLog('preload intro audio done');
+            } catch(e) {
+                DLog('preload intro audio failed: ' + e.message);
+            }
+        })());
+    }
+
+    if (allLoadPromises.length > 0) {
+        DLog(`loadTrackAssets: preloading ${allLoadPromises.length} audio(s) concurrently...`);
+        await Promise.all(allLoadPromises);
+        DLog('loadTrackAssets: all audios preloaded');
+    }
+
+    return {
+        loadedLyricLines,
+        multiStyleModePre,
+        extraTracksEnabledPre,
+        endingEnabledPre,
+        loopSfxEnabledPre,
+        styleBuffers,
+        mainBuffer,
+        extraTrackBuffers,
+        endingBufferPre,
+        loopSfxBufferPre,
+        introEnabledPre,
+        introBufferPre,
+    };
+};
+
+// 统一计算并刷新某首曲目右侧按钮的显示状态
+// 优先级：正在播放/暂停 > 已预载 > 预载中 > 预载
+const refreshTrackButton = (idx) => {
+    const el = document.querySelector(`.track-item[data-track-idx="${idx}"]`);
+    if (!el) return;
+    const btn = el.querySelector('.preload-btn');
+    if (!btn) return;
+    // 重置为基准样式，避免残留旧状态 class
+    btn.className = 'preload-btn';
+    if (idx === currentPlayingIdx) {
+        el.classList.add('playing-item');
+        if (isPaused) {
+            btn.classList.add('state-paused');
+            btn.textContent = '⏸';
+            btn.title = '已暂停（点击列表项可继续/停止）';
+        } else {
+            btn.classList.add('state-playing');
+            btn.textContent = '🔊';
+            btn.title = '正在播放';
+        }
+    } else {
+        el.classList.remove('playing-item');
+        const st = trackPreloadState[idx] || 'idle';
+        if (st === 'loading') {
+            btn.classList.add('state-loading');
+            btn.textContent = '⏳';
+            btn.title = '预加载中…';
+        } else if (st === 'done') {
+            btn.classList.add('state-done');
+            btn.textContent = '✓';
+            btn.title = '已预载（点击曲目即可秒播）';
+        } else {
+            btn.textContent = '⏬';
+            btn.title = '预加载（点击后再播放无需等待）';
+        }
+    }
+};
+
+const refreshAllTrackButtons = () => {
+    if (!config || !Array.isArray(config.tracks)) return;
+    config.tracks.forEach((_, idx) => refreshTrackButton(idx));
+};
+
+const markPreloadState = (idx, state) => {
+    trackPreloadState[idx] = state;
+    refreshTrackButton(idx);
+};
+
+const preloadTrack = async (idx) => {
+    if (preloadedTracks[idx]) return;
+    const cfg = config.tracks[idx];
+    if (!cfg) return;
+    DLog('preloadTrack: start idx=' + idx);
+    markPreloadState(idx, 'loading');
+    try {
+        ensureCtx();
+        preloadedTracks[idx] = await loadTrackAssets(cfg);
+        markPreloadState(idx, 'done');
+        DLog('preloadTrack: done idx=' + idx);
+    } catch (e) {
+        DLog('preloadTrack error:', e.message);
+        markPreloadState(idx, 'idle');
+        delete preloadedTracks[idx];
+    }
+};
+
 const playTrack = async (idx) => {
     // 加载锁：正在加载时禁止再次点击
     if (isLoadingTrack) {
         DLog(`playTrack: loading in progress (idx=${loadingTrackIdx}), ignore click idx=${idx}`);
         return;
     }
+    // 同上一次「因无手势而延迟」的待播放作废，避免误触发旧曲目
+    pendingBeginPlayback = null;
     // 同曲不重复播放
     if (currentTrack && activeTrackCfg && config.tracks[idx] === activeTrackCfg) {
         DLog(`playTrack: same track, ignore`);
@@ -1653,6 +1946,7 @@ const playTrack = async (idx) => {
     
     try {
         DLog(`playTrack START: idx=${idx}`);
+        isPaused = false;
         const cfg = config.tracks[idx];
         if (!cfg) {
             DLog('playTrack: no cfg, abort');
@@ -1661,116 +1955,26 @@ const playTrack = async (idx) => {
         DLog(`playTrack: cfg.name=${cfg.name}`);
         expandCategoryForTrack(idx, true);
         
-        DLog('playTrack: loading lyrics (background)...');
-        const loadedLyricLines = await loadLyrics(cfg, false);
-        DLog('playTrack: lyrics loaded');
-        
-        DLog('playTrack: loading all audios concurrently...');
-
-        const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
-        const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
-        const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
-        const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
-        const styleBuffers = {};
-        let mainBuffer = null;
-        let extraTrackBuffers = [];
-        let endingBufferPre = null;
-        let loopSfxBufferPre = null;
-
-        const allLoadPromises = [];
-
-        // 主音频
-        allLoadPromises.push((async () => {
-            try {
-                mainBuffer = await loadBuffer(cfg.filename, cfg.bgm_dir_id || '');
-                DLog('preload main track done');
-            } catch(e) {
-                DLog('preload main track failed:', e.message);
-            }
-        })());
-
-        // 多风格
-        if (multiStyleModePre) {
-            cfg.styles.forEach((style, sIdx) => {
-                if (!style.filename) return;
-                allLoadPromises.push((async () => {
-                    try {
-                        const sfilename = style.filename || cfg.filename;
-                        const sdirId = style.bgm_dir_id || cfg.bgm_dir_id || '';
-                        const buf = await loadBuffer(sfilename, sdirId);
-                        styleBuffers[sIdx] = buf;
-                        DLog(`preload style ${sIdx} (${style.name}) done`);
-                    } catch(e) {
-                        DLog(`preload style ${sIdx} failed: ${e.message}`);
-                    }
-                })());
-            });
+        // ===== 复用预加载资源，或实时加载 =====
+        let assets;
+        if (preloadedTracks[idx]) {
+            assets = preloadedTracks[idx];
+            DLog('playTrack: reuse preloaded assets idx=' + idx);
+        } else {
+            assets = await loadTrackAssets(cfg);
         }
-        // 额外轨道
-        if (extraTracksEnabledPre) {
-            cfg.extra_tracks.forEach((et, etIdx) => {
-                if (!et.filename) return;
-                allLoadPromises.push((async () => {
-                    try {
-                        const etfn = et.filename;
-                        const etdir = et.dir_id || cfg.bgm_dir_id || '';
-                        const buf = await loadBuffer(etfn, etdir);
-                        extraTrackBuffers[etIdx] = buf;
-                        DLog(`preload extra track ${etIdx} (${et.name}) done`);
-                    } catch(e) {
-                        DLog(`preload extra track ${etIdx} failed: ${e.message}`);
-                    }
-                })());
-            });
-        }
-        // 收尾音频
-        if (endingEnabledPre) {
-            allLoadPromises.push((async () => {
-                try {
-                    const efn = cfg.ending_filename;
-                    const edir = cfg.ending_dir_id || cfg.bgm_dir_id || '';
-                    endingBufferPre = await loadBuffer(efn, edir);
-                    DLog('preload ending audio done');
-                } catch(e) {
-                    DLog('preload ending audio failed: ' + e.message);
-                }
-            })());
-        }
-        // 循环提示音效
-        if (loopSfxEnabledPre) {
-            allLoadPromises.push((async () => {
-                try {
-                    const lfn = cfg.loop_sfx_filename;
-                    const ldir = cfg.loop_sfx_dir_id || cfg.bgm_dir_id || '';
-                    loopSfxBufferPre = await loadBuffer(lfn, ldir);
-                    DLog('preload loop sfx done');
-                } catch(e) {
-                    DLog('preload loop sfx failed: ' + e.message);
-                }
-            })());
-        }
-
-        // 前奏音频
-        const introEnabledPre = !!(cfg.intro_enabled && cfg.intro_filename);
-        let introBufferPre = null;
-        if (introEnabledPre) {
-            allLoadPromises.push((async () => {
-                try {
-                    const ifn = cfg.intro_filename;
-                    const idir = cfg.intro_dir_id || cfg.bgm_dir_id || '';
-                    introBufferPre = await loadBuffer(ifn, idir);
-                    DLog('preload intro audio done');
-                } catch(e) {
-                    DLog('preload intro audio failed: ' + e.message);
-                }
-            })());
-        }
-
-        if (allLoadPromises.length > 0) {
-            DLog(`playTrack: preloading ${allLoadPromises.length} audio(s) concurrently...`);
-            await Promise.all(allLoadPromises);
-            DLog('playTrack: all audios preloaded');
-        }
+        const loadedLyricLines = assets.loadedLyricLines;
+        const multiStyleModePre = assets.multiStyleModePre;
+        const extraTracksEnabledPre = assets.extraTracksEnabledPre;
+        const endingEnabledPre = assets.endingEnabledPre;
+        const loopSfxEnabledPre = assets.loopSfxEnabledPre;
+        const styleBuffers = assets.styleBuffers;
+        let mainBuffer = assets.mainBuffer;
+        let extraTrackBuffers = assets.extraTrackBuffers;
+        let endingBufferPre = assets.endingBufferPre;
+        let loopSfxBufferPre = assets.loopSfxBufferPre;
+        const introEnabledPre = assets.introEnabledPre;
+        let introBufferPre = assets.introBufferPre;
 
         // 设置主音频全局变量
         if (mainBuffer) {
@@ -1820,6 +2024,8 @@ const playTrack = async (idx) => {
                 lyricEl.style.fontFamily = '"Zpix", "Yu Gothic UI", sans-serif';
             } else if (cfg.font_face === '851tegakizatsu') {
                 lyricEl.style.fontFamily = '"851tegakizatsu", "Yu Gothic UI", sans-serif';
+            } else if (cfg.font_face === 'unifont_jp') {
+                lyricEl.style.fontFamily = '"Unifont_JP", "Yu Gothic UI", sans-serif';
             }
         }
         
@@ -1844,7 +2050,10 @@ const playTrack = async (idx) => {
         }
         
         ensureCtx();
-        
+        // 尝试让 AudioContext 进入 running（远程控制时本页可能尚未发生用户手势，
+        // 需等用户在播放器页面点击/按键解锁后才能真正出声）。
+        await waitForAudioRunning(600);
+
         if (!audioCtx) {
             DLog('playTrack: FATAL - audioCtx is null after ensureCtx!');
             return;
@@ -2094,33 +2303,44 @@ const playTrack = async (idx) => {
             }
         };
 
-        if (introEnabled && introBuffer) {
-            introPlaying = true;
-            introTrack = createTrack('intro');
-            const introStartTime = audioCtx.currentTime + 0.05;
-            const trackGain = cfg.gain != null ? Number(cfg.gain) : 1.0;
-            if (configGainNode) {
-                configGainNode.gain.cancelScheduledValues(introStartTime);
-                configGainNode.gain.setValueAtTime(trackGain, introStartTime);
-            }
-            const ok = playSegmentAt(introTrack, 0, introStartTime, {
-                enableLoop: false,
-                initialGain: 1.0,
-                buffer: introBuffer,
-            });
-            if (ok) {
-                DLog(`intro track started: dur=${introBuffer.duration.toFixed(3)}s`);
-                const introEndTime = introStartTime + introBuffer.duration;
-                DLog(`intro will end at: ${introEndTime.toFixed(4)}s`);
-                startMainAudio(introEndTime);
+        const beginPlayback = () => {
+            if (introEnabled && introBuffer) {
+                introPlaying = true;
+                introTrack = createTrack('intro');
+                const introStartTime = audioCtx.currentTime + 0.05;
+                const trackGain = cfg.gain != null ? Number(cfg.gain) : 1.0;
+                if (configGainNode) {
+                    configGainNode.gain.cancelScheduledValues(introStartTime);
+                    configGainNode.gain.setValueAtTime(trackGain, introStartTime);
+                }
+                const ok = playSegmentAt(introTrack, 0, introStartTime, {
+                    enableLoop: false,
+                    initialGain: 1.0,
+                    buffer: introBuffer,
+                });
+                if (ok) {
+                    DLog(`intro track started: dur=${introBuffer.duration.toFixed(3)}s`);
+                    const introEndTime = introStartTime + introBuffer.duration;
+                    DLog(`intro will end at: ${introEndTime.toFixed(4)}s`);
+                    startMainAudio(introEndTime);
+                } else {
+                    introEnabled = false;
+                    introTrack = null;
+                    introPlaying = false;
+                    startMainAudio();
+                }
             } else {
-                introEnabled = false;
-                introTrack = null;
-                introPlaying = false;
                 startMainAudio();
             }
+        };
+
+        // 仅当 AudioContext 已运行才真正调度音频；否则（本页尚无手势，例如纯手机遥控）
+        // 登记待播放，待用户在播放器页面点击解锁后立即启动，避免把音频调度到「过去」而解锁后仍无声。
+        if (audioCtx && audioCtx.state === 'running') {
+            beginPlayback();
         } else {
-            startMainAudio();
+            showAudioLockHint();
+            pendingBeginPlayback = beginPlayback;
         }
 
         // 收尾音频初始化（不立即播放）
@@ -2164,6 +2384,10 @@ const playTrack = async (idx) => {
         }
 
         DLog('playTrack: COMPLETE');
+        currentPlayingIdx = idx;
+        refreshAllTrackButtons();
+        updatePauseButton();
+        rcBroadcastState();
     } catch (e) {
         DLog('playTrack FATAL ERROR:', e.message, e.stack);
         console.error('playTrack error:', e);
@@ -2196,7 +2420,7 @@ const updateLoadingUI = (loading, idx) => {
         // 高亮正在加载的曲目
         const items = list.querySelectorAll('.track-item');
         items.forEach((item, i) => {
-            const itemIdx = parseInt(item.querySelector('.play-btn')?.dataset?.idx || '-1', 10);
+            const itemIdx = parseInt(item.querySelector('.preload-btn')?.dataset?.idx || '-1', 10);
             if (itemIdx === idx) {
                 item.classList.add('loading-item');
             } else {
@@ -2230,37 +2454,53 @@ const updateExtraTracksPanel = () => {
         btn.className = 'et-toggle-btn' + (isOn ? ' active' : '');
         btn.dataset.etIdx = idx;
         btn.textContent = (isOn ? '🔊 ' : '🔇 ') + (et.name || `轨道 ${idx + 1}`);
-        btn.addEventListener('click', () => {
-            if (et.switching) return;
-            const now = audioCtx ? audioCtx.currentTime + 0.02 : 0;
-            const fadeEnd = now + EXTRA_TRACK_FADE_DURATION;
-            const targetGain = et.muted ? et.volume : 0;
-            if (et.gain) {
-                try {
-                    et.gain.gain.cancelScheduledValues(now);
-                    et.gain.gain.setValueAtTime(et.gain.gain.value, now);
-                    et.gain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
-                } catch(_) {}
-            }
-            et.muted = !et.muted;
-            et.switching = true;
-            btn.classList.toggle('active', !et.muted);
-            btn.textContent = (et.muted ? '🔇 ' : '🔊 ') + (et.name || `轨道 ${idx + 1}`);
-            setTimeout(() => {
-                et.switching = false;
-            }, EXTRA_TRACK_FADE_DURATION * 1000);
-        });
+        btn.addEventListener('click', () => toggleExtraTrack(idx));
         list.appendChild(btn);
     });
+};
+
+// 切换某条额外轨道的开/关（与播放器面板按钮逻辑一致，供按钮与遥控命令共用）
+const toggleExtraTrack = (idx) => {
+    if (!extraTracksEnabled) return;
+    const et = extraTracks[idx];
+    if (!et || !et.gain) return;
+    // 不在淡变中途丢弃命令（遥控端可能连续快速切换）：直接按最新目标重设增益斜坡即可。
+    const now = audioCtx ? audioCtx.currentTime + 0.02 : 0;
+    const fadeEnd = now + EXTRA_TRACK_FADE_DURATION;
+    const targetGain = et.muted ? et.volume : 0;
+    try {
+        et.gain.gain.cancelScheduledValues(now);
+        et.gain.gain.setValueAtTime(et.gain.gain.value, now);
+        et.gain.gain.linearRampToValueAtTime(targetGain, fadeEnd);
+    } catch (_) {}
+    et.muted = !et.muted;
+    et.switching = true;
+    setTimeout(() => { et.switching = false; rcBroadcastState(); }, EXTRA_TRACK_FADE_DURATION * 1000);
+    renderExtraTracks();
+};
+
+// 设置某条额外轨道的音量（0~1），非静音时实时调整增益；供遥控命令共用
+const setExtraTrackVolume = (idx, vol01) => {
+    if (!extraTracksEnabled) return;
+    const et = extraTracks[idx];
+    if (!et) return;
+    const v = Math.max(0, Math.min(1, vol01));
+    et.volume = v;
+    if (!et.muted && et.gain) {
+        const now = audioCtx ? audioCtx.currentTime + 0.02 : 0;
+        const fadeEnd = now + 0.15;
+        try {
+            et.gain.gain.cancelScheduledValues(now);
+            et.gain.gain.setValueAtTime(et.gain.gain.value, now);
+            et.gain.gain.linearRampToValueAtTime(v, fadeEnd);
+        } catch (_) {}
+    }
+    renderExtraTracks();
 };
 
 const STYLE_FADE_DURATION = 3.0;
 
 const switchStyle = (styleIdx) => {
-    if (styleSwitching) {
-        DLog('switchStyle: already switching, ignore');
-        return;
-    }
     if (!multiStyleMode || !activeTrackCfg) {
         DLog('switchStyle: multi_style not active');
         return;
@@ -2269,6 +2509,9 @@ const switchStyle = (styleIdx) => {
         DLog('switchStyle: same style, ignore');
         return;
     }
+    // 允许淡变进行中再次切换目标：清除上一次“完成”定时器后直接对新目标做交叉淡入淡出。
+    // 遥控端会连续快速发送切换命令，若直接丢弃会导致状态与高亮不同步。
+    if (styleSwitchTimer != null) { clearTimeout(styleSwitchTimer); styleSwitchTimer = null; }
 
     const oldEntry = styleTracks[currentStyleIdx];
     const newEntry = styleTracks[styleIdx];
@@ -2304,6 +2547,7 @@ const switchStyle = (styleIdx) => {
     nextTrack = ae.next;
 
     renderMarkers();
+    rcBroadcastState();
 
     (async () => {
         try {
@@ -2355,9 +2599,11 @@ const switchStyle = (styleIdx) => {
 
     startUiTicker();
 
-    setTimeout(() => {
+    styleSwitchTimer = setTimeout(() => {
+        styleSwitchTimer = null;
         styleSwitching = false;
         updateStyleButtons();
+        rcBroadcastState();
         DLog(`switchStyle: COMPLETE (styleGain ${currentStyleIdx} active, ${(STYLE_FADE_DURATION * 1000).toFixed(0)}ms)`);
     }, STYLE_FADE_DURATION * 1000);
 };
@@ -2933,13 +3179,86 @@ const toggleFullLoop = () => {
 
 const STOP_FADE_DURATION = 2.0;
 
+const PAUSE_FADE_DURATION = 0.4;
+
+const updatePauseButton = () => {
+    const btn = $('pauseBtn');
+    if (!btn) return;
+    if (isPaused) {
+        btn.textContent = '▶ 继续';
+        btn.classList.add('active');
+    } else {
+        btn.textContent = '⏸ 暂停';
+        btn.classList.remove('active');
+    }
+    btn.disabled = !(currentTrack && currentTrack.source);
+};
+
+// 暂停：淡出后 suspend 上下文，冻结播放位置（类似原神战斗结束淡出暂停）
+const pausePlayback = async () => {
+    if (!currentTrack || !audioCtx || isPaused) return;
+    if (!currentTrack.source) return;
+    isPaused = true;
+    updatePauseButton();
+    if (currentPlayingIdx >= 0) refreshTrackButton(currentPlayingIdx);
+    rcBroadcastState();
+    try {
+        const now = audioCtx.currentTime;
+        masterGain.gain.cancelScheduledValues(now);
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+        masterGain.gain.linearRampToValueAtTime(0.0, now + PAUSE_FADE_DURATION);
+        await new Promise(resolve => setTimeout(resolve, PAUSE_FADE_DURATION * 1000 + 30));
+        // 撤销保护：若淡出期间用户又点了继续，则不 suspend，避免刚恢复又被挂起
+        if (!isPaused) return;
+        if (audioCtx.state === 'running') {
+            await audioCtx.suspend();
+        }
+        DLog('pausePlayback: paused (ctx suspended)');
+    } catch (e) {
+        DLog('pausePlayback err:', e.message);
+    }
+};
+
+// 继续：resume 上下文并淡入，从冻结位置接着播放
+const resumePlayback = async () => {
+    if (!isPaused || !audioCtx) return;
+    try {
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+        const now = audioCtx.currentTime;
+        masterGain.gain.cancelScheduledValues(now);
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+        masterGain.gain.linearRampToValueAtTime(currentMasterVolume, now + PAUSE_FADE_DURATION);
+    } catch (e) {
+        DLog('resumePlayback err:', e.message);
+    }
+    isPaused = false;
+    updatePauseButton();
+    if (currentPlayingIdx >= 0) refreshTrackButton(currentPlayingIdx);
+    rcBroadcastState();
+    scheduleNextLoop();
+    DLog('resumePlayback: resumed');
+};
+
+const togglePause = async () => {
+    if (isPaused) await resumePlayback();
+    else await pausePlayback();
+};
+
 const stopAll = async () => {
+    // 取消可能因无手势而延迟的播放（已停止，不应再启动）
+    pendingBeginPlayback = null;
     clearTimeout(loopSchedulerTimer);
     loopSchedulerTimer = null;
     cancelAnimationFrame(rafId);
     rafId = null;
 
     if (audioCtx && masterGain) {
+        // 若处于暂停(suspend)状态，先恢复上下文，否则淡出时钟冻结无法推进
+        if (audioCtx.state === 'suspended') {
+            try { await audioCtx.resume(); } catch(_){}
+        }
         const now = audioCtx.currentTime;
         const fadeEnd = now + STOP_FADE_DURATION;
         try {
@@ -3030,6 +3349,12 @@ const stopAll = async () => {
     fullLoopSwitching = false;
     if (window._savedLoopParams) window._savedLoopParams = null;
 
+    isPaused = false;
+    updatePauseButton();
+    currentPlayingIdx = -1;
+    refreshAllTrackButtons();
+    rcBroadcastState();
+
     loopSfxEnabled = false;
     loopSfxBuffer = null;
     if (loopSfxGain) { try { loopSfxGain.disconnect(); } catch(_){} loopSfxGain = null; }
@@ -3077,6 +3402,8 @@ let lastBeatIdx = -1;
 const updateUi = () => {
     rafId = requestAnimationFrame(updateUi);
     if (!currentTrack || !activeTrackCfg) return;
+    // 注：向远程控制器广播进度/状态已移至下方独立的 setInterval，
+    // 因为后台标签页中 requestAnimationFrame 会被浏览器暂停，导致遥控端状态冻结。
     const s = currentPlaySec();
     let beatSec = s;
     let uiTotalDur = Math.max(audioDurS || 1, loopEndS || 1);
@@ -3312,17 +3639,19 @@ const renderTrackList = () => {
                     <div class="t-name">${escapeHtml(cfg.name)}</div>
                     <div class="t-meta">${cfg.bpm} BPM${modeTag} · ${cfg.loop_start_bar}:${cfg.loop_start_beat} → ${cfg.loop_end_bar}:${cfg.loop_end_beat} · 循环${dur.toFixed(2)}s</div>
                 </div>
-                <button class="play-btn" data-idx="${idx}">▶</button>
+                <button class="preload-btn" data-idx="${idx}" title="预加载（点击后再播放无需等待）">⏬</button>
             `;
             el.addEventListener('click', (e) => {
-                let idx2 = idx;
-                if (e.target.classList.contains('play-btn')) {
-                    idx2 = parseInt(e.target.dataset.idx, 10);
+                if (e.target.classList.contains('preload-btn')) {
+                    e.stopPropagation();
+                    preloadTrack(idx);
+                    return;
                 }
-                playTrack(idx2);
+                playTrack(idx);
                 if (isMobileBreakpoint()) closeDrawer();
             });
             bodyEl.appendChild(el);
+            if (preloadedTracks[idx]) markPreloadState(idx, 'done');
         });
 
         headerEl.addEventListener('click', () => {
@@ -3338,6 +3667,8 @@ const renderTrackList = () => {
         groupEl.appendChild(wrapEl);
         list.appendChild(groupEl);
     });
+    // 列表重建后统一刷新右侧按钮状态（预载/播放中），确保元素已在 DOM 中
+    refreshAllTrackButtons();
 };
 
 const animateGroupHeight = (groupEl, toCollapsed) => {
@@ -3765,6 +4096,11 @@ const init = async () => {
 
     $('stopBtn').addEventListener('click', async () => await stopAll());
 
+    const pauseBtnEl = $('pauseBtn');
+    if (pauseBtnEl) {
+        pauseBtnEl.addEventListener('click', () => togglePause());
+    }
+
     $('breakLoopBtn').addEventListener('click', () => breakLoop());
     const flBtn = $('fullLoopBtn');
     if (flBtn) {
@@ -3776,6 +4112,7 @@ const init = async () => {
         $('volumeVal').textContent = v;
         currentMasterVolume = v / 100.0;
         if (masterGain) masterGain.gain.value = currentMasterVolume;
+        rcBroadcastState();
     });
 
     $('addBtn').addEventListener('click', () => {
@@ -3851,14 +4188,293 @@ const init = async () => {
         applyTrackCfg(config.tracks[0]);
         updateInfoPanel(0);
     }
+
+    // 启动远程控制 WebSocket（player 角色）
+    rcConnect();
+
+    // 首次用户手势解锁音频（手机遥控播放需要本页面先有手势才能出声）
+    attachAudioUnlock();
+
+    // 加载即创建 AudioContext（此时为 suspended）并显示「点击启用音频」提示。
+    // 浏览器自动播放策略要求本页面至少有一次用户手势，AudioContext 才能出声；
+    // 用户只要在本页面点一下（或在提示条上点一下），之后遥控器就能直接播放。
+    ensureCtx();
+    if (audioCtx && audioCtx.state !== 'running') showAudioLockHint();
 };
 
 document.addEventListener('DOMContentLoaded', init);
 
+// ===================== 远程控制（播放器端 / player 角色） =====================
+// 与 Remote_Controller.html（remote 角色）通过 app.py 的 WebSocket 中继通信：
+// 本端负责把曲目列表与播放状态广播给遥控器，并接收遥控器发来的控制命令。
+let rcWs = null;
+let rcWsReady = false;
+let rcReconnectDelay = 1000;
+let rcLastStateSent = 0;
+
+const rcSend = (obj) => {
+    if (rcWs && rcWs.readyState === WebSocket.OPEN) {
+        try { rcWs.send(JSON.stringify(obj)); } catch (_) {}
+    }
+};
+
+const rcSendTracks = () => {
+    if (!config || !Array.isArray(config.tracks)) return;
+    rcSend({
+        type: 'tracks',
+        tracks: config.tracks.map((c, i) => ({
+            idx: i,
+            name: c.name || `曲目 ${i + 1}`,
+            bpm: c.bpm,
+            category: c.category || '未分类',
+            loop: `${c.loop_start_bar}:${c.loop_start_beat} → ${c.loop_end_bar}:${c.loop_end_beat}`,
+        })),
+    });
+};
+
+// 实时计算当前拍字符串（不依赖 DOM 文本，后台标签页 rAF 暂停时也能正确更新）。
+// 复用 updateUi 中的 barBeat 算法；无播放时返回空串。
+const currentBeatString = () => {
+    if (!currentTrack) return '';
+    const s = currentPlaySec();
+    let beatSec = s;
+    if (multiStyleMode && currentStyleIdx >= 0) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry && entry.offsetDiff != null) beatSec = s - entry.offsetDiff;
+    }
+    const bb = barBeat(beatSec);
+    return `${bb.bar}:${Number(bb.beat.toFixed(2))}`;
+};
+
+// 实时计算当前「绝对拍」（自零拍起的连续网格拍，含变速/变拍补偿），
+// 供遥控端本地 requestAnimationFrame 插值使用。无播放时返回 0。
+const currentAbsBeat = () => {
+    if (!currentTrack || !activeTrackCfg) return 0;
+    const s = currentPlaySec();
+    let beatSec = s;
+    if (multiStyleMode && currentStyleIdx >= 0) {
+        const entry = styleTracks[currentStyleIdx];
+        if (entry && entry.offsetDiff != null) beatSec = s - entry.offsetDiff;
+    }
+    return window.BeatUtils.timeToAbsBeat(
+        beatSec,
+        activeTrackCfg.bpm,
+        activeTrackCfg.beats_per_bar,
+        activeTrackCfg.audio_zero_bar,
+        activeTrackCfg.audio_zero_beat,
+        tempoChanges,
+        meterChanges,
+        activeTrackNvf
+    );
+};
+
+const rcBroadcastState = () => {
+    const t = (currentPlayingIdx >= 0 && config.tracks[currentPlayingIdx]) ? config.tracks[currentPlayingIdx] : null;
+    rcSend({
+        type: 'state',
+        idx: currentPlayingIdx,
+        name: t ? (t.name || '') : null,
+        is_playing: !!(currentTrack && !isPaused),
+        is_paused: !!isPaused,
+        progress_sec: (typeof currentPlaySec === 'function') ? currentPlaySec() : 0,
+        duration_sec: Math.max(audioDurS || 0, loopEndS || 0),
+        volume: Math.round((currentMasterVolume || 0) * 100),
+        track_count: (config && config.tracks) ? config.tracks.length : 0,
+        bpm: activeTrackCfg ? activeTrackCfg.bpm : null,
+        cur_beat: currentBeatString(),
+        style_switching: !!styleSwitching,
+        // 以下字段供遥控端显示当前拍/进度（直接采用播放器推送值，不再本地外推）
+        abs_beat: currentAbsBeat(),
+        beats_per_bar: activeTrackCfg ? activeTrackCfg.beats_per_bar : 4,
+        zero_bar: activeTrackCfg ? activeTrackCfg.audio_zero_bar : 1,
+        zero_beat: activeTrackCfg ? activeTrackCfg.audio_zero_beat : 1,
+        note_value_fraction: activeTrackNvf,
+        meter_changes: (activeTrackCfg && Array.isArray(activeTrackCfg.meter_changes)) ? activeTrackCfg.meter_changes : [],
+        // 风格切换：仅多风格曲目在播放时提供（默认风格 idx = -1）
+        styles: (multiStyleMode && activeTrackCfg && Array.isArray(activeTrackCfg.styles)) ?
+            activeTrackCfg.styles.map((st, i) => ({
+                idx: i,
+                name: st.name || `风格 ${i + 1}`,
+                active: i === currentStyleIdx,
+            })) : [],
+        // 多轨混音：额外轨道的开/关与音量（0-100）
+        extra_tracks: (extraTracksEnabled && extraTracks.length) ?
+            extraTracks.map((et, i) => ({
+                idx: i,
+                name: et.name || `轨道 ${i + 1}`,
+                muted: !!et.muted,
+                volume: Math.round((et.volume != null ? et.volume : 1) * 100),
+                switching: !!et.switching,
+            })) : [],
+        // 循环/收尾控制状态（供遥控端镜像按钮：跳出循环/收尾、完整循环/返回循环段）
+        loop_control: {
+            ending_enabled: !!endingEnabled,
+            ending_playing: !!endingPlaying,
+            loop_broken: !!loopBroken,
+            full_loop_enabled: !!fullLoopEnabled,
+            full_loop_mode: !!isFullLoopMode,
+            full_loop_switching: !!fullLoopSwitching,
+        },
+    });
+};
+
+// 高帧率进度推送：把进度相关字段单独抽成轻量 tick 消息，
+// 结构类（风格/混音/曲目列表）仍走低频的 state，避免每帧重发大量数据。
+const rcBroadcastTick = () => {
+    const t = (currentPlayingIdx >= 0 && config.tracks[currentPlayingIdx]) ? config.tracks[currentPlayingIdx] : null;
+    rcSend({
+        type: 'tick',
+        idx: currentPlayingIdx,
+        name: t ? (t.name || '') : null,
+        is_playing: !!(currentTrack && !isPaused),
+        is_paused: !!isPaused,
+        progress_sec: (typeof currentPlaySec === 'function') ? currentPlaySec() : 0,
+        duration_sec: Math.max(audioDurS || 0, loopEndS || 0),
+        volume: Math.round((currentMasterVolume || 0) * 100),
+        cur_beat: currentBeatString(),
+        // 以下标量供遥控端本地插值（meter_changes 仅 state 推送，避免每帧重发）
+        bpm: activeTrackCfg ? activeTrackCfg.bpm : null,
+        abs_beat: currentAbsBeat(),
+        beats_per_bar: activeTrackCfg ? activeTrackCfg.beats_per_bar : 4,
+        zero_bar: activeTrackCfg ? activeTrackCfg.audio_zero_bar : 1,
+        zero_beat: activeTrackCfg ? activeTrackCfg.audio_zero_beat : 1,
+        note_value_fraction: activeTrackNvf,
+    });
+};
+
+// 前台用 requestAnimationFrame 驱动 ~60fps 高频推送（进度条丝滑）；
+// 后台标签页 rAF 会被暂停，由下面独立的 setInterval 兜底（节流到约 1 秒一次）。
+let rcTickRaf = null;
+let rcLastTickSent = 0;
+const rcTickLoop = () => {
+    const now = performance.now();
+    if (rcWsReady && currentTrack && (now - rcLastTickSent >= 16)) {
+        rcLastTickSent = now;
+        rcBroadcastTick();
+    }
+    rcTickRaf = requestAnimationFrame(rcTickLoop);
+};
+const rcStartTick = () => { if (rcTickRaf == null) rcTickRaf = requestAnimationFrame(rcTickLoop); };
+const rcStopTick = () => { if (rcTickRaf != null) { cancelAnimationFrame(rcTickRaf); rcTickRaf = null; } };
+
+const rcHandleCommand = (data) => {
+    if (!data || data.type !== 'command') return;
+    const a = data.action;
+    try {
+        if (a === 'play_idx' || a === 'play') {
+            const idx = parseInt(data.idx, 10);
+            if (!isNaN(idx) && config.tracks[idx]) playTrack(idx);
+        } else if (a === 'pause') {
+            if (currentTrack && !isPaused) pausePlayback();
+        } else if (a === 'resume') {
+            if (isPaused) resumePlayback();
+        } else if (a === 'toggle_pause') {
+            togglePause();
+        } else if (a === 'stop') {
+            stopAll();
+        } else if (a === 'set_volume') {
+            const v = Math.max(0, Math.min(100, parseInt(data.volume, 10)));
+            if (!isNaN(v)) {
+                currentMasterVolume = v / 100.0;
+                const vs = $('volumeSlider'); if (vs) vs.value = String(v);
+                const vv = $('volumeVal'); if (vv) vv.textContent = String(v);
+                if (masterGain) masterGain.gain.value = currentMasterVolume;
+                rcBroadcastState();
+            }
+        } else if (a === 'switch_style') {
+            const sIdx = parseInt(data.style_idx, 10);
+            if (!isNaN(sIdx) && multiStyleMode && activeTrackCfg && activeTrackCfg.styles) {
+                if (sIdx === -1 || activeTrackCfg.styles[sIdx]) {
+                    switchStyle(sIdx);
+                    rcBroadcastState();
+                }
+            }
+        } else if (a === 'toggle_extra_track') {
+            const etIdx = parseInt(data.et_idx, 10);
+            if (!isNaN(etIdx)) {
+                toggleExtraTrack(etIdx);
+                rcBroadcastState();
+            }
+        } else if (a === 'break_loop') {
+            breakLoop();
+            rcBroadcastState();
+        } else if (a === 'toggle_full_loop') {
+            toggleFullLoop();
+            rcBroadcastState();
+        } else if (a === 'set_extra_track_volume') {
+            const etIdx = parseInt(data.et_idx, 10);
+            const v = Math.max(0, Math.min(100, parseInt(data.volume, 10)));
+            if (!isNaN(etIdx) && !isNaN(v)) {
+                setExtraTrackVolume(etIdx, v / 100.0);
+                rcBroadcastState();
+            }
+        } else if (a === 'request_state') {
+            rcBroadcastState();
+        }
+    } catch (e) {
+        DLog('rcHandleCommand err:', e.message);
+    }
+};
+
+const rcConnect = () => {
+    if (typeof WebSocket === 'undefined') return;
+    fetch('/api/ws_info').then(r => r.json()).then(info => {
+        const url = info.ws_url || `ws://${info.host}:${info.ws_port}`;
+        let ws;
+        try { ws = new WebSocket(url); } catch (e) { DLog('rcConnect new WebSocket err:', e.message); return; }
+        rcWs = ws;
+        ws.onopen = () => {
+            rcWsReady = true;
+            rcReconnectDelay = 1000;
+            ws.send(JSON.stringify({ type: 'hello', role: 'player' }));
+            rcSendTracks();
+            rcBroadcastState();
+            rcStartTick();
+        };
+        ws.onmessage = (ev) => {
+            try {
+                const data = JSON.parse(ev.data);
+                if (data.type === 'command') rcHandleCommand(data);
+            } catch (_) {}
+        };
+        ws.onclose = () => {
+            rcWsReady = false;
+            rcWs = null;
+            rcStopTick();
+            setTimeout(rcConnect, rcReconnectDelay);
+            rcReconnectDelay = Math.min(rcReconnectDelay * 2, 15000);
+        };
+        ws.onerror = () => { try { ws.close(); } catch (_) {} };
+    }).catch(e => {
+        DLog('rcConnect ws_info err:', e.message);
+        setTimeout(rcConnect, rcReconnectDelay);
+        rcReconnectDelay = Math.min(rcReconnectDelay * 2, 15000);
+    });
+};
+
+// 定期把最新曲目列表推送给遥控器（以便管理面板修改后保持同步）
+setInterval(() => { if (rcWsReady) rcSendTracks(); }, 10000);
+
+// 后台标签页中 requestAnimationFrame 会被浏览器暂停，导致遥控端进度冻结。
+// 这里用慢速 setInterval 仅作后台兜底（前台已由上面的 rAF 高频推送）：
+// 浏览器会把后台 interval 节流到约 1 秒一次，保证后台时遥控端进度仍缓慢更新。
+setInterval(() => {
+    if (rcWsReady && currentTrack && document.hidden) rcBroadcastTick();
+}, 1000);
+
+// 低频完整状态安全网：风格/混音/音量/曲目结构等低频变化，进度由 tick 高频覆盖。
+setInterval(() => {
+    if (rcWsReady) rcBroadcastState();
+}, 2000);
+
 // 移动端切后台后 AudioContext 可能被系统挂起，返回前台时立即恢复
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+    if (!document.hidden) {
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+        }
+        // 返回前台时若远程控制连接已断开，立即尝试重连
+        if (!rcWsReady && !rcWs) rcConnect();
     }
 });
 

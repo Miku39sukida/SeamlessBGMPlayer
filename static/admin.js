@@ -16,6 +16,7 @@ const FONT_FILES = {
   teyvat: '/static/TEYVATBLACK-REGULAR.TTF',
   '851tegakizatsu': '/static/851tegakizatsu.TTF',
   zpix: '/static/ZPIX.TTF',
+  unifont_jp: '/static/unifont_jp-16.0.04.otf',
 };
 
 // 检查字体文件是否存在（HEAD 请求），结果存入 state.fontAvailability
@@ -603,6 +604,7 @@ function renderTrackCardBody(card, t) {
           <option value="teyvat">提瓦特字体</option>
           <option value="851tegakizatsu">851手書き雑（手写体）</option>
           <option value="zpix">Zpix 像素字体</option>
+          <option value="unifont_jp">Unifont日文点阵黑字体</option>
         </select>
       </div>
     </div>

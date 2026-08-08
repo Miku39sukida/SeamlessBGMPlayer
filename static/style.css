@@ -32,6 +32,14 @@
     font-display: swap;
 }
 
+@font-face {
+    font-family: "Unifont_JP";
+    src: url("/static/unifont_jp-16.0.04.otf") format("opentype");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --primary: #ff6fa8;
     --primary-dark: #e85a94;
@@ -84,6 +92,26 @@ body {
     box-shadow: var(--shadow);
     backdrop-filter: blur(10px);
 }
+
+.audio-lock-hint {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    z-index: 9999;
+    max-width: calc(100vw - 32px);
+    padding: 12px 18px;
+    border-radius: 12px;
+    background: rgba(255, 179, 71, 0.95);
+    color: #3a2a00;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: center;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+}
+.audio-lock-hint[hidden] { display: none; }
 
 .header-left {
     display: inline-flex;
@@ -1162,6 +1190,12 @@ body.drawer-open .drawer-overlay {
     color: #5a4000;
 }
 
+.btn-secondary.active {
+    background: linear-gradient(135deg, var(--accent), var(--warning));
+    color: #5a4000;
+    box-shadow: 0 0 0 2px rgba(255, 196, 0, 0.4);
+}
+
 .btn-danger {
     background: linear-gradient(135deg, var(--danger), #d94867);
     color: white;
@@ -1398,7 +1432,8 @@ body.drawer-open .drawer-overlay {
     margin-top: 2px;
 }
 
-.track-item .play-btn {
+.track-item .play-btn,
+.track-item .preload-btn {
     padding: 6px 10px;
     background: var(--primary);
     color: white;
@@ -1411,9 +1446,32 @@ body.drawer-open .drawer-overlay {
     transition: all 0.2s;
 }
 
-.track-item .play-btn:hover {
+.track-item .play-btn:hover,
+.track-item .preload-btn:hover {
     background: var(--primary-dark);
     transform: scale(1.05);
+}
+
+.track-item.playing-item {
+    background: rgba(255, 122, 173, 0.16);
+    border-left: 4px solid var(--accent);
+}
+
+.track-item .preload-btn.state-done {
+    background: #2e9e5b;
+}
+
+.track-item .preload-btn.state-loading {
+    background: #c79a2e;
+    cursor: default;
+}
+
+.track-item .preload-btn.state-playing {
+    background: #2f7de0;
+}
+
+.track-item .preload-btn.state-paused {
+    background: #d98324;
 }
 
 /* 加载状态样式 */
@@ -1427,13 +1485,15 @@ body.drawer-open .drawer-overlay {
     pointer-events: none;
 }
 
-.track-item.loading-item .play-btn {
+.track-item.loading-item .play-btn,
+.track-item.loading-item .preload-btn {
     background: #aaa;
     pointer-events: none;
     animation: pulse-loading 1.2s ease-in-out infinite;
 }
 
-.track-item.loading-item .play-btn::after {
+.track-item.loading-item .play-btn::after,
+.track-item.loading-item .preload-btn::after {
     content: '';
 }
 
