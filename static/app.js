@@ -551,9 +551,11 @@ const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfade
         });
         if (!ok) return;
 
-        // 关键：循环跳变重建额外轨道时，必须沿用 et.muted（与 et.volume）决定目标增益，
-        // 否则静音的混音轨道会在每次循环后被重新唤醒出声，导致播放器声音与遥控端静音状态不同步。
-        const etTargetGain = et.muted ? 0.0 : (et.volume != null ? et.volume : 1.0);
+        // 关键：循环跳变重建额外轨道时，per-track 内部增益(newTrk.gain)只负责本段淡入淡出包络，
+        // 必须固定到 1.0；真正的静音/音量由持久化的 et.gain（trackGain）统一控制。
+        // 否则静音时 newTrk.gain 会被置 0，之后在面板/遥控“开启”该混音轨时只调整 et.gain，
+        // 而 newTrk.gain 仍停在 0，导致声音始终被掐断（表现为“开不了”）。
+        const etTargetGain = 1.0;
         try {
             newTrk.gain.gain.cancelScheduledValues(fadeStartAtCtx);
             newTrk.gain.gain.setValueAtTime(0.0, fadeStartAtCtx);
@@ -3070,7 +3072,9 @@ const toggleFullLoop = () => {
             const offsetDiff = defZeroOffset - zOffset;
             const etStartOffset = Math.max(0, fadeInStartOffset + offsetDiff);
 
-            const etTargetGain = et.muted ? 0.0 : 1.0;
+            // per-track 内部增益只负责淡入包络，固定到 1.0；静音/音量由 et.gain 统一控制，
+            // 否则静音后循环重建轨道会把 newEtTrack.gain 置 0，之后“开启”混音轨只调 et.gain 而 newEtTrack.gain 仍 0，导致开不了。
+            const etTargetGain = 1.0;
 
             const newEtTrack = createTrack(`seg-et-${etIdx}`);
             const etok = playSegmentAt(newEtTrack, etStartOffset, fadeInStartAt, {
