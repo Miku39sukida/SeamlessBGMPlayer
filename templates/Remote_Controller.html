@@ -65,7 +65,10 @@
       return r.json().then(function (j) { return { status: r.status, body: j }; });
     }).then(function (res) {
       if (res.body && res.body.ok && res.body.token) {
-        window.location.replace('/remote_app?token=' + encodeURIComponent(res.body.token));
+        // 令牌存入 Cookie（不再写进 URL，避免地址栏明文 + 浏览器历史泄露）
+        document.cookie = 'rc_token=' + encodeURIComponent(res.body.token)
+          + '; path=/; max-age=' + (12 * 3600) + '; samesite=lax';
+        window.location.replace('/remote_app');
       } else {
         pwdBtn.disabled = false;
         pwdErr.textContent = (res.body && res.body.error) ? res.body.error : '验证失败';

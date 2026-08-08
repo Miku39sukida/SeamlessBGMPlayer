@@ -39,6 +39,13 @@
   .status.ok { background: rgba(47,158,91,.2); color: #7ee2a8; }
   .status.bad { background: rgba(217,83,79,.2); color: #ff9b98; }
   .status.warn { background: rgba(217,131,36,.2); color: #ffc07a; }
+  .logout-btn {
+    border: none; background: transparent; color: var(--muted);
+    font-size: 18px; padding: 4px 6px; cursor: pointer; line-height: 1;
+    transition: transform .1s, color .15s;
+  }
+  .logout-btn:hover { color: var(--text); }
+  .logout-btn:active { transform: scale(.9); }
 
   .nowplaying {
     background: linear-gradient(135deg, var(--panel), var(--panel2));
@@ -87,10 +94,13 @@
   .track-item .t-info { flex: 1; min-width: 0; }
   .track-item .t-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .track-item .t-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .track-item .t-play {
+  .track-item .t-preload {
     background: var(--primary); color: #fff; border: none; border-radius: 10px;
-    padding: 8px 12px; font-size: 14px; font-weight: 700; flex-shrink: 0;
+    padding: 8px 12px; font-size: 14px; font-weight: 700; flex-shrink: 0; transition: background .15s;
   }
+  .track-item .t-preload:active { transform: scale(.96); }
+  .track-item .t-preload.state-loading { background: var(--panel2); color: var(--warn); }
+  .track-item .t-preload.state-done { background: rgba(108,200,120,.18); color: #6cc878; }
   .cat-title { font-size: 13px; color: var(--muted); margin: 14px 4px 6px; font-weight: 700; }
 
   /* 可折叠分类 */
@@ -182,6 +192,7 @@
     <button id="menuBtn" class="menu-btn" aria-label="打开曲目列表" title="曲目列表">☰</button>
     <h1>🎮 远程控制器</h1>
     <span id="status" class="status">连接中…</span>
+    <button id="logoutBtn" class="logout-btn" title="登出" aria-label="登出">🔓</button>
   </header>
 
   <div class="nowplaying">
@@ -259,6 +270,7 @@
     styleBusy: false, styleUnlockTimer: null,   // 风格切换中：禁用全部风格按钮，待播放器通知完成
     mixBusy: {}, mixUnlockTimer: {},             // 混音轨道切换中：按轨道分别禁用/启用
     loop: { endingEnabled: false, endingPlaying: false, broken: false, fullEnabled: false, fullMode: false, fullSwitching: false },
+    preloadStates: {},          // idx -> 'idle' | 'loading' | 'done'（由播放器推送镜像，用于曲目列表预载按钮显示）
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -275,15 +287,23 @@
   var sideMenu = $('sideMenu');
   var sideOverlay = $('sideOverlay');
   var sideClose = $('sideClose');
+  var logoutBtn = $('logoutBtn');
 
-  // 从 URL 读取服务端签发的令牌（/remote_app?token=...）；无令牌则回密码门。
-  function getToken() {
+  function getCookie(name) {
     try {
-      var p = new URLSearchParams(location.search);
-      var t = p.get('token') || '';
-      if (t) { try { sessionStorage.setItem('rc_token', t); } catch (e) {} return t; }
-      return sessionStorage.getItem('rc_token') || '';
+      var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
     } catch (e) { return ''; }
+  }
+  function clearCookie(name) {
+    try { document.cookie = name + '=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT'; } catch (e) {}
+  }
+
+  // 令牌存放于 Cookie（由密码门登录时写入），不再暴露在 URL；无令牌则回密码门。
+  function getToken() {
+    var t = getCookie('rc_token');
+    if (t) return t;
+    try { return sessionStorage.getItem('rc_token') || ''; } catch (e) { return ''; }
   }
   var RC_TOKEN = getToken();
 
@@ -299,6 +319,16 @@
   if (menuBtn) menuBtn.addEventListener('click', openMenu);
   if (sideClose) sideClose.addEventListener('click', closeMenu);
   if (sideOverlay) sideOverlay.addEventListener('click', closeMenu);
+
+  // 登出：吊销服务端令牌、清除本地 Cookie，回到密码门
+  function logout() {
+    try { if (RC.ws) RC.ws.close(); } catch (e) {}
+    clearCookie('rc_token');
+    try { sessionStorage.removeItem('rc_token'); } catch (e) {}
+    fetch('/api/remote_logout', { method: 'POST', credentials: 'same-origin' }).catch(function () {});
+    window.location.replace('/remote');
+  }
+  if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
   function setStatus(text, cls) {
     statusEl.textContent = text;
@@ -342,6 +372,7 @@
           if (d.type === 'welcome') { setStatus('已连接', 'ok'); }
           else if (d.type === 'auth_failed') {
             // 令牌失效（过期等）：清空本地令牌并重回密码门重新验证
+            clearCookie('rc_token');
             try { sessionStorage.removeItem('rc_token'); } catch (e) {}
             RC_TOKEN = '';
             window.location.replace('/remote');
@@ -428,7 +459,17 @@
           '<div class="t-idx">' + (t.idx + 1) + '</div>' +
           '<div class="t-info"><div class="t-name">' + escapeHtml(t.name) + '</div>' +
           '<div class="t-meta">BPM ' + (t.bpm || '-') + ' · ' + (t.loop || '') + '</div></div>' +
-          '<button class="t-play">▶</button>';
+          '<button class="t-preload" data-idx="' + t.idx + '">⏬</button>';
+        // 预加载按钮：点击仅触发预载（不播放），并阻止冒泡以免误触发整项播放
+        var pb = item.querySelector('.t-preload');
+        var pst = RC.preloadStates[t.idx] || 'idle';
+        applyPreloadBtn(pb, pst);
+        pb.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var stt = RC.preloadStates[t.idx] || 'idle';
+          if (stt === 'loading') return; // 加载中忽略重复点击
+          send({ type: 'command', action: 'preload_idx', idx: t.idx });
+        });
         item.addEventListener('click', function () {
           send({ type: 'command', action: 'play_idx', idx: t.idx });
           closeMenu();
@@ -455,6 +496,36 @@
       var idx = parseInt(items[i].dataset.idx, 10);
       if (idx === curIdx) items[i].classList.add('playing');
       else items[i].classList.remove('playing');
+    }
+  }
+
+  // 依据预载状态刷新单个预载按钮的文案/样式（idle/loading/done）
+  function applyPreloadBtn(btn, state) {
+    if (!btn) return;
+    btn.className = 't-preload';
+    if (state === 'loading') {
+      btn.classList.add('state-loading');
+      btn.textContent = '⏳';
+      btn.title = '预加载中…';
+      btn.disabled = true;
+    } else if (state === 'done') {
+      btn.classList.add('state-done');
+      btn.textContent = '✓';
+      btn.title = '已预载（点曲目即可秒播）';
+      btn.disabled = false;
+    } else {
+      btn.textContent = '⏬';
+      btn.title = '预加载（点击后再播放无需等待）';
+      btn.disabled = false;
+    }
+  }
+
+  // 把当前 RC.preloadStates 镜像到列表里所有已渲染的预载按钮（收到 state/tick 时调用）
+  function syncPreloadButtons() {
+    var btns = trackListEl.querySelectorAll('.t-preload');
+    for (var i = 0; i < btns.length; i++) {
+      var idx = parseInt(btns[i].dataset.idx, 10);
+      applyPreloadBtn(btns[i], RC.preloadStates[idx] || 'idle');
     }
   }
 
@@ -642,6 +713,15 @@
       RC.loop.fullMode = !!d.loop_control.full_loop_mode;
       RC.loop.fullSwitching = !!d.loop_control.full_loop_switching;
     }
+    // 预加载状态镜像：仅更新已知条目（播放器只推送 loading/done，idle 不推送，故不主动清除）
+    if (Array.isArray(d.preload_states)) {
+      d.preload_states.forEach(function (p) {
+        if (p && typeof p.idx === 'number' && typeof p.state === 'string') {
+          RC.preloadStates[p.idx] = p.state;
+        }
+      });
+      syncPreloadButtons();
+    }
   }
 
   // 直接采用播放器推送的进度（时间），不做本地时钟外推。
@@ -705,18 +785,14 @@
     }
   }
 
-  // 高频 tick：仅刷新插值基准点与播放按钮/音量，进度与「当前所在拍」由本地 rAF 插值渲染
+  // 高频 tick：仅刷新插值基准点与音量/播放·停止按钮，进度由播放器推送值直接渲染
   function renderTick(d) {
     applyBasepoint(d);
     renderInterp();
     var playing = !!d.is_playing, paused = !!d.is_paused;
-    if (paused) {
-      playPauseBtn.disabled = false; playPauseBtn.textContent = '▶ 继续';
-    } else if (playing) {
-      playPauseBtn.disabled = false; playPauseBtn.textContent = '⏸ 暂停';
-    } else {
-      playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放';
-    }
+    if (paused) { playPauseBtn.disabled = false; playPauseBtn.textContent = '▶ 继续'; }
+    else if (playing) { playPauseBtn.disabled = false; playPauseBtn.textContent = '⏸ 暂停'; }
+    else { playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放'; }
     stopBtn.disabled = !(playing || paused);
     if (typeof d.volume === 'number') {
       if (document.activeElement !== volume) volume.value = String(d.volume);

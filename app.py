@@ -749,7 +749,15 @@ def api_remote_auth():
     if pwd != _load_password():
         return jsonify({"ok": False, "error": "密码错误"}), 401
     tok = _create_remote_token()
-    return jsonify({"ok": True, "token": tok})
+    resp = jsonify({"ok": True, "token": tok})
+    # 令牌写入 Cookie（非 HttpOnly，便于 /remote_app 页面鉴权与 WS 握手复用），
+    # 不再放进 URL，避免地址栏明文暴露、被记进浏览器历史 / referrer。
+    resp.set_cookie(
+        'rc_token', tok,
+        max_age=REMOTE_TOKEN_TTL, httponly=False,
+        samesite='Lax', path='/',
+    )
+    return resp
 
 @app.route('/api/change-password', methods=['POST'])
 @login_required
@@ -1373,16 +1381,27 @@ def remote_controller():
 def remote_app():
     """远程控制器实际控制界面（含全部控制逻辑）。
 
-    必须由密码门跳转并携带有效 token，否则重定向回 /remote。
+    必须由密码门登录后持有效 Cookie 令牌才能加载，否则重定向回 /remote。
     与 /remote（纯密码门）分离，确保“先输入密码、再加载页面”。
+    令牌仅存于 Cookie（不再出现在 URL），避免地址栏明文暴露。
     """
-    tok = request.args.get('token') or ''
+    tok = request.cookies.get('rc_token') or ''
     if not _valid_remote_token(tok):
         return redirect('/remote')
     resp = send_from_directory('templates', 'Remote_Controller_app.html')
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
+    return resp
+
+
+@app.route('/api/remote_logout', methods=['POST'])
+def api_remote_logout():
+    """远程控制器登出：吊销当前令牌并清除 Cookie，回到密码门。"""
+    tok = request.cookies.get('rc_token') or ''
+    _remote_tokens.pop(tok, None)
+    resp = jsonify({"ok": True})
+    resp.set_cookie('rc_token', '', max_age=0, expires=0, path='/')
     return resp
 
 
