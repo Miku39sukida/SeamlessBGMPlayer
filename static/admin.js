@@ -91,6 +91,13 @@ function defaultTrack() {
     ending_filename: '',
     ending_dir_id: '',
     ending_fade_duration: 2.0,
+    // 收尾节拍/歌词配置（可选）：启用后收尾音频按此节拍网格解析同名 .brc/.lrc 歌词
+    ending_beat_config_enabled: false,
+    ending_bpm: 120,
+    ending_beats_per_bar: 4,
+    ending_note_value: 'quarter',
+    ending_audio_zero_bar: 1,
+    ending_audio_zero_beat: 1,
     full_loop_enabled: false,
     full_loop_fade_duration: 2.0,
     loop_sfx_enabled: false,
@@ -100,6 +107,10 @@ function defaultTrack() {
     intro_enabled: false,
     intro_filename: '',
     intro_dir_id: '',
+    char_voice_enabled: false,
+    char_voice_dir_id: '',
+    char_voice_ducking: 0.25,
+    char_voice: [],
     gain: 1.0,
   };
 }
@@ -200,6 +211,13 @@ async function loadConfig() {
     if (typeof t.jump_seg_start_beat === 'undefined') t.jump_seg_start_beat = 0;
     if (typeof t.jump_seg_end_bar === 'undefined') t.jump_seg_end_bar = 0;
     if (typeof t.jump_seg_end_beat === 'undefined') t.jump_seg_end_beat = 0;
+    // 角色语音：缺省值填充
+    if (!Array.isArray(t.char_voice)) t.char_voice = [];
+    if (t.char_voice_ducking == null) t.char_voice_ducking = 0.25;
+    t.char_voice = t.char_voice.filter(v => v && v.filename).map(v => ({
+      name: v.name || '',
+      filename: v.filename || '',
+    }));
     // 额外轨道：旧 vocal 配置迁移 + 默认值填充
     if (!Array.isArray(t.extra_tracks)) {
       const extra = [];
@@ -432,6 +450,42 @@ function renderSelectOptionsForOne(selectEl) {
         fake.value = need;
         fake.selected = true;
         fake.textContent = `⚠️ 当前：${curFn}（不在当前目录或搜索结果中）`;
+        selectEl.insertBefore(fake, selectEl.firstChild.nextSibling);
+      }
+    }
+  }
+}
+
+// 角色语音文件选择器：复用曲目文件列表的数据结构，按 char_voice_dir_id（空则回退 bgm_dir_id）过滤
+function renderCharVoiceFileSelect(selectEl, t, voiceIdx) {
+  const dirId = t.char_voice_dir_id || t.bgm_dir_id || 'default';
+  const dirInfo = state.bgmDirs.find(d => d.id === dirId) || { id: dirId, label: dirId };
+  const filesInDir = state.bgmList.filter(e => e.dir_id === dirId);
+  const v = (t.char_voice && t.char_voice[voiceIdx]) ? t.char_voice[voiceIdx] : {};
+  const curFn = v.filename || '';
+
+  let html = '<option value="">— 未选择音频 —</option>';
+  filesInDir.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')).forEach(e => {
+    const sel = e.filename === curFn ? 'selected' : '';
+    html += `<option value="${encodeURIComponent(e.dir_id)}::${encodeURIComponent(e.filename)}" data-dir="${escapeHtml(e.dir_id)}" data-fn="${escapeHtml(e.filename)}" ${sel}>${escapeHtml(e.filename)}</option>`;
+  });
+  if (filesInDir.length === 0) {
+    html += `<option disabled>— ${escapeHtml(dirInfo.label || dirId)}：暂无音频文件 —</option>`;
+  } else {
+    html += `<option disabled>— ${escapeHtml(dirInfo.label || dirId)}：${filesInDir.length} 个文件 —</option>`;
+  }
+  selectEl.innerHTML = html;
+
+  if (curFn) {
+    const need = encodeURIComponent(dirId) + '::' + encodeURIComponent(curFn);
+    if (selectEl.value !== need) {
+      if (Array.from(selectEl.options).some(o => o.value === need)) {
+        selectEl.value = need;
+      } else {
+        const fake = document.createElement('option');
+        fake.value = need;
+        fake.selected = true;
+        fake.textContent = `⚠️ 当前：${curFn}（不在目录中）`;
         selectEl.insertBefore(fake, selectEl.firstChild.nextSibling);
       }
     }
@@ -819,6 +873,44 @@ function renderTrackCardBody(card, t) {
         <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
           提示：配置后播放器「跳出循环」按钮变为「收尾」，点击后整体混音淡出，收尾音频淡入，无缝衔接
         </div>
+        <div class="field" style="margin-top:12px;">
+          <label class="checkbox-label">
+            <input type="checkbox" data-k="ending_beat_config_enabled"> 启用节拍/歌词配置（按收尾音频节拍显示 BRC 歌词）
+          </label>
+          <div class="ending-beat-panel" data-k="ending_beat_panel" style="display:none; margin-top:10px;">
+            <div class="grid-4">
+              <div class="field">
+                <label>BPM <span class="hint">(每分钟拍数)</span></label>
+                <input type="number" step="0.01" min="0.1" data-k="ending_bpm">
+              </div>
+              <div class="field">
+                <label>拍号 (每小节拍数)</label>
+                <input type="number" step="1" min="1" data-k="ending_beats_per_bar">
+              </div>
+              <div class="field">
+                <label>音符时值</label>
+                <select data-k="ending_note_value">
+                  <option value="whole">全音符 (1)</option>
+                  <option value="half">二分音符 (2)</option>
+                  <option value="quarter">四分音符 (4)</option>
+                  <option value="eighth">八分音符 (8)</option>
+                  <option value="sixteenth">十六分音符 (16)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>音频 0s 所在小节</label>
+                <input type="number" step="1" min="1" data-k="ending_audio_zero_bar">
+              </div>
+              <div class="field">
+                <label>音频 0s 所在拍</label>
+                <input type="number" step="1" min="1" data-k="ending_audio_zero_beat">
+              </div>
+            </div>
+            <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+              提示：无需另外选歌词文件，播放器会用与收尾音频同名的 .brc/.lrc，按上面节拍网格解析显示；点击「收尾」后歌词随之切换。
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -862,6 +954,32 @@ function renderTrackCardBody(card, t) {
         </div>
       </div>
     </div>
+
+    <div class="section-title">🎙 角色语音（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="char_voice_enabled"> 启用角色语音
+      </label>
+      <div class="char-voice-panel" data-k="char_voice_panel" style="display:none; margin-top:12px;">
+        <div class="field">
+          <label>语音目录</label>
+          <select data-k="char_voice_dir_id"></select>
+        </div>
+        <div class="field-row">
+          <label>播放时音乐音量:</label>
+          <input type="number" class="char-voice-ducking" min="0" max="1" step="0.05" value="0.25" data-k="char_voice_ducking">
+          <span>（0~1，如 0.25 = 25%）</span>
+        </div>
+        <div class="field">
+          <label>语音列表</label>
+          <div class="char-voice-list" data-k="char_voice_list"></div>
+          <button class="btn btn-small btn-primary" data-act="add-char-voice" style="margin-top:8px;">＋ 添加语音</button>
+        </div>
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          提示：播放曲目时点击语音按钮，音乐会自动压低，语音结束后恢复
+        </div>
+      </div>
+    </div>
   `;
 
   $$('input, select', card).forEach(el => {
@@ -877,6 +995,12 @@ function renderTrackCardBody(card, t) {
     renderSelectOptionsForOne($('select.file-select', card));
     const vocalSel = card.querySelector('select.vocal-file-select');
     if (vocalSel && vocalSel._render) vocalSel._render();
+    // 若语音未指定独立目录，回退到主曲目目录，需刷新语音文件选择器
+    if (!t.char_voice_dir_id && charVoiceListEl) {
+      charVoiceListEl.querySelectorAll('select.cv-file-select').forEach((sel, idx) => {
+        renderCharVoiceFileSelect(sel, t, idx);
+      });
+    }
   });
 
   const fileSelect = $('select.file-select', card);
@@ -1414,6 +1538,19 @@ function renderTrackCardBody(card, t) {
     });
   }
 
+  // 收尾节拍/歌词配置子面板显隐
+  const endingBeatCheck = card.querySelector('input[data-k="ending_beat_config_enabled"]');
+  const endingBeatPanel = card.querySelector('[data-k="ending_beat_panel"]');
+  if (endingBeatCheck) {
+    endingBeatCheck.checked = !!t.ending_beat_config_enabled;
+    if (endingBeatPanel) endingBeatPanel.style.display = t.ending_beat_config_enabled ? '' : 'none';
+    endingBeatCheck.addEventListener('change', () => {
+      t.ending_beat_config_enabled = endingBeatCheck.checked;
+      if (endingBeatPanel) endingBeatPanel.style.display = endingBeatCheck.checked ? '' : 'none';
+      markDirty(card);
+    });
+  }
+
   const endingFileSearch = card.querySelector('.ending-file-search');
   const endingFileSelect = card.querySelector('.ending-file-select');
   const endingFadeDur = card.querySelector('.ending-fade-dur');
@@ -1655,6 +1792,108 @@ function renderTrackCardBody(card, t) {
   dirSelect.addEventListener('change', () => {
     renderLoopSfxFileOptions();
   });
+
+  // --- 角色语音 ---
+  const charVoiceEnabledCheck = card.querySelector('input[data-k="char_voice_enabled"]');
+  const charVoicePanel = card.querySelector('[data-k="char_voice_panel"]');
+  const charVoiceDirSelect = card.querySelector('select[data-k="char_voice_dir_id"]');
+  const charVoiceDucking = card.querySelector('.char-voice-ducking');
+  const charVoiceListEl = card.querySelector('[data-k="char_voice_list"]');
+  if (charVoiceEnabledCheck) {
+    charVoiceEnabledCheck.checked = !!t.char_voice_enabled;
+    charVoicePanel.style.display = t.char_voice_enabled ? '' : 'none';
+    charVoiceEnabledCheck.addEventListener('change', () => {
+      t.char_voice_enabled = charVoiceEnabledCheck.checked;
+      charVoicePanel.style.display = t.char_voice_enabled ? '' : 'none';
+      markDirty(card);
+    });
+  }
+  // 填充目录选项（复用 bgm_dirs）
+  if (charVoiceDirSelect) {
+    const renderCharVoiceDirOptions = () => {
+      const dirs = state.bgmDirs || [];
+      let html = '<option value="">— 使用主曲目目录 —</option>';
+      dirs.forEach(d => {
+        const sel = (t.char_voice_dir_id || '') === d.id ? 'selected' : '';
+        html += `<option value="${escapeHtml(d.id)}" ${sel}>${d.id === 'default' ? '🟠 ' : '🟣 '}${escapeHtml(d.label || d.id)}${d.exists ? '' : ' ⚠️'}</option>`;
+      });
+      charVoiceDirSelect.innerHTML = html;
+      charVoiceDirSelect.value = t.char_voice_dir_id || '';
+    };
+    renderCharVoiceDirOptions();
+    charVoiceDirSelect.addEventListener('change', () => {
+      t.char_voice_dir_id = charVoiceDirSelect.value || '';
+      // 目录切换后刷新所有语音文件选择器
+      charVoiceListEl.querySelectorAll('select.cv-file-select').forEach((sel, idx) => {
+        renderCharVoiceFileSelect(sel, t, idx);
+      });
+      markDirty(card);
+    });
+  }
+  if (charVoiceDucking) {
+    charVoiceDucking.value = t.char_voice_ducking != null ? t.char_voice_ducking : 0.25;
+    charVoiceDucking.addEventListener('input', () => {
+      const v = parseFloat(charVoiceDucking.value);
+      t.char_voice_ducking = isNaN(v) ? 0.25 : Math.max(0, Math.min(1, v));
+      markDirty(card);
+    });
+  }
+  const renderCharVoiceList = () => {
+    if (!charVoiceListEl) return;
+    charVoiceListEl.innerHTML = '';
+    t.char_voice = Array.isArray(t.char_voice) ? t.char_voice : [];
+    t.char_voice.forEach((v, idx) => {
+      const row = document.createElement('div');
+      row.className = 'char-voice-row';
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;';
+      row.innerHTML = `
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">
+          <input type="text" placeholder="显示名称" class="cv-name" value="${escapeHtml(v.name || '')}" style="width:100%;">
+          <select class="cv-file-select" size="5" style="width:100%;"></select>
+        </div>
+        <button class="btn btn-small btn-danger cv-remove" title="删除" style="margin-top:28px;">✕</button>
+      `;
+      row.querySelector('.cv-name').addEventListener('input', (e) => {
+        t.char_voice[idx].name = e.target.value;
+        markDirty(card);
+      });
+      const fileSel = row.querySelector('.cv-file-select');
+      renderCharVoiceFileSelect(fileSel, t, idx);
+      fileSel.addEventListener('change', () => {
+        const val = fileSel.value;
+        if (val) {
+          const parts = val.split('::');
+          const dir = decodeURIComponent(parts[0] || '');
+          const fn = decodeURIComponent(parts[1] || '');
+          t.char_voice[idx].filename = fn;
+          // 如果当前语音目录为空，自动填充为选择的目录，避免后续手动输入
+          if (!t.char_voice_dir_id && dir) {
+            t.char_voice_dir_id = dir;
+            charVoiceDirSelect.value = dir;
+          }
+        } else {
+          t.char_voice[idx].filename = '';
+        }
+        markDirty(card);
+      });
+      row.querySelector('.cv-remove').addEventListener('click', () => {
+        t.char_voice.splice(idx, 1);
+        renderCharVoiceList();
+        markDirty(card);
+      });
+      charVoiceListEl.appendChild(row);
+    });
+  };
+  renderCharVoiceList();
+  const addCvBtn = card.querySelector('[data-act="add-char-voice"]');
+  if (addCvBtn) {
+    addCvBtn.addEventListener('click', () => {
+      t.char_voice = t.char_voice || [];
+      t.char_voice.push({ name: `语音 ${t.char_voice.length + 1}`, filename: '' });
+      renderCharVoiceList();
+      markDirty(card);
+    });
+  }
 
   refreshPreview(card, t);
   validateTrack(t, card);
