@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>🎮 远程控制器</title>
+<title>🎮 无缝循环遥控器</title>
 <style>
   :root {
     --bg: #15131c;
@@ -19,6 +19,7 @@
     --bad: #d9534f;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  button { margin: 0; }
   html, body {
     margin: 0; padding: 0;
     background: var(--bg); color: var(--text);
@@ -103,18 +104,23 @@
   .track-item .t-preload.state-done { background: rgba(108,200,120,.18); color: #6cc878; }
   .cat-title { font-size: 13px; color: var(--muted); margin: 14px 4px 6px; font-weight: 700; }
 
-  /* 可折叠分类 */
-  .cat-block { margin: 10px 0; }
+  /* 可折叠分类：标题像 FV 文件浏览器那样滚动时一个顶一个吸顶 */
+  .cat-block { margin: 0; }
+  .cat-block + .cat-block { margin-top: 8px; }
   .cat-header {
     display: flex; align-items: center; gap: 8px;
-    padding: 10px 12px; background: var(--panel);
-    border-radius: 12px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+    margin: 0 -12px; padding: 12px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    border-radius: 0;
+    cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+    position: sticky; top: 0; z-index: 5;
   }
   .cat-header .cat-arrow { color: var(--muted); font-size: 12px; transition: transform .2s; }
   .cat-header.collapsed .cat-arrow { transform: rotate(-90deg); }
   .cat-header .cat-name { flex: 1; font-size: 14px; font-weight: 700; }
   .cat-header .cat-count { font-size: 12px; color: var(--muted); }
-  .cat-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+  .cat-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 12px; }
   .cat-header.collapsed + .cat-body { display: none; }
 
   /* 风格切换 */
@@ -138,6 +144,19 @@
   .mix-toggle:active { background: var(--panel); }
   .mix-toggle.active { background: var(--ok); color: #fff; }
   .style-btn-r:disabled, .mix-toggle:disabled { opacity: .4; cursor: default; }
+
+  /* 角色语音按钮（纵向列表） */
+  .voice-list { display: flex; flex-direction: column; gap: 10px; }
+  .voice-btn-r {
+    width: 100%; text-align: left;
+    background: var(--panel); color: var(--text); border: 2px solid transparent;
+    border-radius: 12px; padding: 12px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: background .15s, border .15s, opacity .2s;
+  }
+  .voice-btn-r:active { background: var(--panel2); }
+  .voice-btn-r.active { border-color: var(--accent); background: rgba(255,209,102,.14); color: var(--accent); }
+  .voice-btn-r:disabled { opacity: .4; cursor: default; }
+  .voice-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
 
   .wake-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 10px 12px; background: var(--panel); border-radius: 12px; }
   .wake-row label { flex: 1; font-size: 14px; }
@@ -172,17 +191,34 @@
     display: flex; flex-direction: column; box-shadow: 4px 0 24px rgba(0,0,0,.45);
   }
   .side-menu.open { transform: translateX(0); }
-  .side-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 14px 12px; font-size: 16px; font-weight: 700;
-    border-bottom: 1px solid rgba(255,255,255,.07);
-  }
   .side-close {
+    position: absolute; top: 10px; right: 10px; z-index: 10;
     border: none; background: transparent; color: var(--muted);
     font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px; border-radius: 8px;
   }
   .side-close:active { background: var(--panel2); }
-  .side-body { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+
+  /* 列表类型标签：常驻抽屉顶部，不随列表滚动（flex-shrink:0 保证不被压缩） */
+  .side-tabs {
+    display: flex; gap: 8px; flex-shrink: 0;
+    padding: 12px 44px 10px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid rgba(255,255,255,.1);
+  }
+  .side-tab {
+    flex: 1; border-radius: 10px;
+    background: rgba(255,255,255,.12); color: var(--text);
+    border: 1px solid rgba(255,255,255,.22);
+    padding: 10px 6px; font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: background .15s, color .15s, opacity .2s, border-color .15s;
+  }
+  .side-tab.active { background: var(--primary); color: #fff; border-color: transparent; }
+  .side-tab:disabled { opacity: .4; cursor: default; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* side-body 是独立的列表滚动容器；分类标题在此容器内 sticky 吸顶，自然吸在上方常驻标签的下方 */
+  .side-body { flex: 1; overflow-y: auto; padding: 0 12px 12px; -webkit-overflow-scrolling: touch; }
   .side-body .track-list { gap: 8px; }
 </style>
 </head>
@@ -190,7 +226,7 @@
 <div class="wrap">
   <header>
     <button id="menuBtn" class="menu-btn" aria-label="打开曲目列表" title="曲目列表">☰</button>
-    <h1>🎮 远程控制器</h1>
+    <h1>🎮 无缝循环遥控器</h1>
     <span id="status" class="status">连接中…</span>
     <button id="logoutBtn" class="logout-btn" title="登出" aria-label="登出">🔓</button>
   </header>
@@ -241,15 +277,24 @@
   </div>
 </div>
 
-  <!-- 左侧曲目抽屉：点击左上角 ☰ 展开 -->
+  <!-- 左侧抽屉：曲目列表 + 角色语音 标签切换 -->
   <div id="sideOverlay" class="side-overlay"></div>
   <aside id="sideMenu" class="side-menu">
-    <div class="side-header">
-      <span>📂 曲目列表</span>
-      <button id="sideClose" class="side-close" aria-label="关闭曲目列表" title="关闭">✕</button>
+    <button id="sideClose" class="side-close" aria-label="关闭" title="关闭">✕</button>
+    <!-- 列表类型标签：常驻抽屉顶部，不随列表滚动 -->
+    <div class="side-tabs">
+      <button class="side-tab active" data-tab="tracks" id="tracksTab">📂 曲目列表</button>
+      <button class="side-tab" data-tab="voices" id="voicesTab" disabled>🎙 角色语音</button>
     </div>
+    <!-- 列表滚动容器：分类标题在此容器内吸顶，吸在上方标签的下方 -->
     <div class="side-body">
-      <div id="trackList" class="track-list"></div>
+      <div id="tracksPanel" class="tab-panel active">
+        <div id="trackList" class="track-list"></div>
+      </div>
+      <div id="voicesPanel" class="tab-panel">
+        <div id="charVoiceList" class="voice-list"></div>
+        <div id="voiceEmpty" class="voice-empty" style="display:none;">当前曲目没有配置角色语音</div>
+      </div>
     </div>
   </aside>
 
@@ -266,12 +311,14 @@
     styleSig: '',               // 风格结构签名（仅在结构变化时重建）
     mixSig: '',                 // 混音轨道结构签名
     styleEls: {}, mixEls: {},   // 已渲染的风格/混音控件引用
+    voiceSig: '', voiceEls: [], // 角色语音结构签名与控件引用
     bpm: null, idx: -1, name: '',  // 高频 tick 需要的最新标量
     base: { progress: 0, wall: 0, playing: false },        // 进度基准点（收到数据包时刷新，仅取播放器推送值）
     styleBusy: false, styleUnlockTimer: null,   // 风格切换中：禁用全部风格按钮，待播放器通知完成
     mixBusy: {}, mixUnlockTimer: {},             // 混音轨道切换中：按轨道分别禁用/启用
     loop: { endingEnabled: false, endingPlaying: false, broken: false, fullEnabled: false, fullMode: false, fullSwitching: false },
     preloadStates: {},          // idx -> 'idle' | 'loading' | 'done'（由播放器推送镜像，用于曲目列表预载按钮显示）
+    sideTab: 'tracks'           // 抽屉当前标签：'tracks' | 'voices'
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -289,6 +336,11 @@
   var sideOverlay = $('sideOverlay');
   var sideClose = $('sideClose');
   var logoutBtn = $('logoutBtn');
+  var tracksTab = $('tracksTab');
+  var voicesTab = $('voicesTab');
+  var tracksPanel = $('tracksPanel');
+  var voicesPanel = $('voicesPanel');
+  var voiceEmpty = $('voiceEmpty');
 
   function getCookie(name) {
     try {
@@ -308,7 +360,7 @@
   }
   var RC_TOKEN = getToken();
 
-  // 左侧曲目抽屉：点击左上角 ☰ 展开，点遮罩 / ✕ / 选曲后关闭
+  // 左侧抽屉：点击左上角 ☰ 展开，点遮罩 / ✕ / 选曲后关闭
   function openMenu() {
     if (sideMenu) sideMenu.classList.add('open');
     if (sideOverlay) sideOverlay.classList.add('show');
@@ -320,6 +372,17 @@
   if (menuBtn) menuBtn.addEventListener('click', openMenu);
   if (sideClose) sideClose.addEventListener('click', closeMenu);
   if (sideOverlay) sideOverlay.addEventListener('click', closeMenu);
+
+  // 抽屉内标签切换
+  function switchSideTab(tab) {
+    RC.sideTab = tab;
+    if (tracksTab) tracksTab.classList.toggle('active', tab === 'tracks');
+    if (voicesTab) voicesTab.classList.toggle('active', tab === 'voices');
+    if (tracksPanel) tracksPanel.classList.toggle('active', tab === 'tracks');
+    if (voicesPanel) voicesPanel.classList.toggle('active', tab === 'voices');
+  }
+  if (tracksTab) tracksTab.addEventListener('click', function () { switchSideTab('tracks'); });
+  if (voicesTab) voicesTab.addEventListener('click', function () { switchSideTab('voices'); });
 
   // 登出：吊销服务端令牌、清除本地 Cookie，回到密码门
   function logout() {
@@ -712,6 +775,51 @@
     }
   }
 
+  // 角色语音：渲染在左侧抽屉「角色语音」标签页内，纵向列表
+  function renderCharVoiceControls() {
+    var st = RC.state;
+    var cv = (st && st.char_voice) ? st.char_voice : { enabled: false, voices: [], playing_idx: -1 };
+    var listEl = $('charVoiceList');
+    var hasVoices = cv.enabled && cv.voices && cv.voices.length;
+    if (voicesTab) voicesTab.disabled = !hasVoices;
+    if (!hasVoices) {
+      listEl.innerHTML = '';
+      RC.voiceSig = '';
+      RC.voiceEls = [];
+      if (voiceEmpty) voiceEmpty.style.display = '';
+      // 若当前在语音标签但无语音，自动切回曲目列表
+      if (RC.sideTab === 'voices') switchSideTab('tracks');
+      return;
+    }
+    if (voiceEmpty) voiceEmpty.style.display = 'none';
+    var sig = cv.voices.map(function (v) { return v.idx + ':' + v.name; }).join('|') + '|' + cv.playing_idx;
+    if (sig !== RC.voiceSig) {
+      RC.voiceSig = sig;
+      listEl.innerHTML = '';
+      RC.voiceEls = [];
+      cv.voices.forEach(function (v) {
+        var btn = document.createElement('button');
+        btn.className = 'voice-btn-r' + (v.idx === cv.playing_idx ? ' active' : '');
+        btn.textContent = v.name || ('语音 ' + (v.idx + 1));
+        btn.disabled = cv.playing_idx !== -1 && v.idx !== cv.playing_idx;
+        btn.addEventListener('click', function () {
+          send({ type: 'command', action: 'play_char_voice', voice_idx: v.idx });
+          // 选完语音不关闭抽屉，方便连续点；若希望关闭可取消下行注释
+          // closeMenu();
+        });
+        listEl.appendChild(btn);
+        RC.voiceEls.push({ idx: v.idx, el: btn });
+      });
+    } else {
+      RC.voiceEls.forEach(function (item) {
+        var btn = item.el;
+        if (!btn) return;
+        btn.classList.toggle('active', item.idx === cv.playing_idx);
+        btn.disabled = cv.playing_idx !== -1 && item.idx !== cv.playing_idx;
+      });
+    }
+  }
+
   // 收到 state/tick 时刷新进度基准点（直接采用播放器推送值，不做本地外推）。
   function applyBasepoint(d) {
     if (typeof d.bpm === 'number') RC.bpm = d.bpm;
@@ -774,6 +882,7 @@
       else updateTrackHighlight();
       renderStyleControls();
       renderMixControls();
+      renderCharVoiceControls();
       syncControlLocks();
       syncLoopControls();
       playPauseBtn.disabled = true; playPauseBtn.textContent = '▶ 播放';
@@ -787,6 +896,7 @@
     else updateTrackHighlight();
     renderStyleControls();
     renderMixControls();
+    renderCharVoiceControls();
     syncControlLocks();
     syncLoopControls();
     var playing = st.is_playing, paused = st.is_paused;
@@ -814,6 +924,7 @@
       volVal.textContent = String(d.volume);
     }
     syncLoopControls();
+    renderCharVoiceControls();
   }
 
   function escapeHtml(s) {
