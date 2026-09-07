@@ -565,10 +565,14 @@ const scheduleNextLoop = () => {
     if (distToEnd < 0.002) distToEnd = 0.002;
 
     // 移动端切后台时 setTimeout 会被节流到 1 秒，需要更大的 lookAhead 留出余量。
+    // 后台运行时部分浏览器/系统节流失控（可能 >1s），再放大余量避免错过切换点。
     // 桌面端保持 180ms（无节流问题，更紧凑的调度）。
     // doSingleJump 被提前调用是安全的：它用 audioCtx.currentTime 精确调度新音频源，
     // transition 逻辑保证 UI 时间轴正确，旧音频源的淡出仍在对的时间点发生。
-    const baseLookAhead = IS_MOBILE_DEVICE ? 1.5 : 0.18;
+    const isBackground = document.hidden;
+    const baseLookAhead = IS_MOBILE_DEVICE
+        ? (isBackground ? 3.0 : 1.5)
+        : 0.18;
     const lookAhead = fadeOutS > 0.0002 ? Math.max(baseLookAhead, fadeOutS + 0.1) : baseLookAhead;
     let triggerDelayMs = (distToEnd - lookAhead) * 1000;
     if (nearAudioEnd || distToEnd <= lookAhead + 0.001) triggerDelayMs = 1;
@@ -1436,51 +1440,16 @@ const _buildFlattenCharSlots = (karaoke, lineEndTime = null) => {
         }
     }
 
+    // 每个 token 作为一个整体 slot：多字同拍的 token（如 BRC「要释」「三界」）整体一起高亮 / 滚动，
+    // 单字 token 即逐字。end = 下一个 token 的 start（同拍连续 token 自动零时长 → 瞬间完成，
+    // 还原 PV「前段瞬 / 后段平滑」语义）。空格等空白含在 token 文本内，由像素地图按真实宽度填充，
+    // 不会因空格窄而出现高亮边慢速“爬行”。这与网易云 / QQ 音乐等在线播放器的逐音节、同拍字一起亮一致。
     const slots = [];
     for (let i = 0; i < tokens.length; i += 1) {
         const token = tokens[i];
-        const duration = token.end - token.start;
-        if (duration <= 0) {
-            const chars = Array.from(token.text);
-            for (let c = 0; c < chars.length; c += 1) {
-                slots.push({ start: token.start, end: token.start, text: chars[c] });
-            }
-            continue;
-        }
-
-        if (_isPureEnglishText(token.text)) {
-            slots.push({ start: token.start, end: token.end, text: token.text });
-        } else {
-            const chars = Array.from(token.text);
-            const charCount = chars.length;
-            if (charCount === 0) continue;
-            if (charCount === 1) {
-                slots.push({ start: token.start, end: token.end, text: chars[0] });
-            } else {
-                const step = duration / charCount;
-                for (let c = 0; c < charCount; c += 1) {
-                    const s = token.start + step * c;
-                    const e = c === charCount - 1 ? token.end : token.start + step * (c + 1);
-                    slots.push({ start: s, end: e, text: chars[c] });
-                }
-            }
-        }
-    }
-
-    if (slots.length === 0) return [];
-    let totalDur = 0;
-    let totalChar = 0;
-    for (let i = 0; i < slots.length - 1; i += 1) {
-        const dur = slots[i + 1].start - slots[i].start;
-        if (dur > 0) {
-            totalDur += dur;
-            totalChar += slots[i].text.length;
-        }
-    }
-    const avgPerChar = totalChar > 0 && totalDur > 0 ? totalDur / totalChar : 0.4;
-    const lastSlot = slots[slots.length - 1];
-    if (lastSlot.end - lastSlot.start <= 0) {
-        lastSlot.end = lastSlot.start + Math.max(0.6, avgPerChar * Math.max(1, lastSlot.text.length));
+        const start = token.start;
+        const end = (token.end !== null && token.end > start) ? token.end : (start + 0.6);
+        slots.push({ start, end, text: token.text });
     }
 
     return slots;
@@ -4823,6 +4792,28 @@ document.addEventListener('visibilitychange', () => {
         }
         // 返回前台时若远程控制连接已断开，立即尝试重连
         if (!rcWsReady && !rcWs) rcConnect();
+        // 后台 setTimeout 可能被严重节流，返回前台后立刻重新评估循环调度，
+        // 防止因错过切换点而导致音频停止。
+        if (currentTrack && !isPaused) scheduleNextLoop();
+    }
+});
+
+// 部分浏览器在后台会直接冻结页面（Page Lifecycle: frozen），
+// 冻结前保存一个标记，返回时若音频已停则尝试恢复播放。
+document.addEventListener('pagehide', () => {
+    try {
+        if (currentTrack && currentTrack.source) {
+            window.__lastLoopTrackIdx = currentPlayingIdx;
+            window.__lastLoopPlayTime = getRawPlaybackPos(currentTrack);
+        }
+    } catch(_) {}
+});
+window.addEventListener('pageshow', () => {
+    if (currentTrack && !isPaused) {
+        if (audioCtx && audioCtx.state !== 'running') {
+            audioCtx.resume().catch(() => {});
+        }
+        scheduleNextLoop();
     }
 });
 
