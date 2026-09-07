@@ -575,49 +575,66 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
         matches = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
         if not matches:
             continue
-        
-        # 解析卡拉OK逐字标签 <bar:beat>字，填充 karaoke 数组
-        char_matches = re.findall(r'<(\d+):(\d+(?:\.\d+)?)>([^<]*)', line)
-        karaoke = []
-        for bar_str, beat_str, char_text in char_matches:
-            bar = int(bar_str)
-            beat = float(beat_str)
-            abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
-            time_sec = beat_to_sec(abs_beat)
-            karaoke.append({
-                'time_sec': max(0, time_sec),
-                'text': char_text,
-            })
-        
-        # text 同时去除 [bar:beat] 和 <bar:beat> 标签
-        text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', line)
-        text = re.sub(r'<(\d+):(\d+(?:\.\d+)?)>', '', text).strip()
-        if not text:
-            # 只有时间标签没有文字的行（如 [8:1]），作为空行（间奏）处理
-            for bar_str, beat_str in matches:
+
+        # 行首时间（第一个 [bar:beat]）
+        s_bar = int(matches[0][0])
+        s_beat = float(matches[0][1])
+        s_abs = bar_beat_to_abs(s_bar, s_beat, beats_per_bar, meter_changes)
+        s_time = max(0, beat_to_sec(s_abs))
+
+        # 支持「[起始拍] 日文卡拉OK <...> [同一起始拍] 中文译文」格式：
+        # 第二个 [bar:beat]（与行首同拍）作为“中文开始”分隔符；
+        # 若只有一个 [bar:beat]（标准格式），则整行视为日文，无独立译文。
+        tag_spans = [(m.start(), m.end()) for m in re.finditer(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)]
+        has_zh = len(tag_spans) >= 2
+        if has_zh:
+            jp_region = line[tag_spans[0][1]:tag_spans[1][0]]
+            zh_region = line[tag_spans[1][1]:]
+        else:
+            jp_region = line[tag_spans[0][1]:]
+            zh_region = ''
+
+        # 解析卡拉OK逐字标签 <bar:beat>字：遇到下一个 < 或 [ 即停止，
+        # 避免吞掉 [同拍] 中文分隔符。
+        # 空文本 token（如行尾 <5:4.5>）是"前一个字的结束时间"标记，必须保留，
+        # 由前端 _buildFlattenCharSlots 的空 token 分支消费（赋结束时间）。
+        def _parse_karaoke(region):
+            out = []
+            for bar_str, beat_str, char_text in re.findall(r'<(\d+):(\d+(?:\.\d+)?)>([^<\[]*)', region):
                 bar = int(bar_str)
                 beat = float(beat_str)
                 abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
-                time_sec = beat_to_sec(abs_beat)
-                entries.append({
-                    'time_sec': max(0, time_sec),
-                    'text': '',
-                    'karaoke': [],
-                    'is_empty': True,
-                })
-            continue
-        
-        for bar_str, beat_str in matches:
-            bar = int(bar_str)
-            beat = float(beat_str)
-            abs_beat = bar_beat_to_abs(bar, beat, beats_per_bar, meter_changes)
-            time_sec = beat_to_sec(abs_beat)
+                out.append({'time_sec': max(0, beat_to_sec(abs_beat)), 'text': char_text})
+            return out
+
+        karaoke = _parse_karaoke(jp_region)
+        jp_text = re.sub(r'<(\d+):(\d+(?:\.\d+)?)>', '', jp_region).strip()
+
+        zh_text = ''
+        zh_karaoke = []
+        if zh_region:
+            zh_text = re.sub(r'\[(\d+):(\d+(?:\.\d+)?)\]', '', zh_region)
+            zh_text = re.sub(r'<(\d+):(\d+(?:\.\d+)?)>', '', zh_text).strip()
+            zh_karaoke = _parse_karaoke(zh_region)
+
+        if not jp_text and not zh_text:
+            # 只有时间标签没有文字的行（间奏），作为空行处理
             entries.append({
-                'time_sec': max(0, time_sec),
-                'text': text.strip(),
-                'karaoke': list(karaoke),
-                'is_empty': False,
+                'time_sec': s_time,
+                'text': '',
+                'karaoke': [],
+                'is_empty': True,
             })
+            continue
+
+        entries.append({
+            'time_sec': s_time,
+            'text': jp_text,
+            'karaoke': list(karaoke),
+            'translation': zh_text if zh_text else None,
+            'translation_karaoke': list(zh_karaoke) if zh_text else [],
+            'is_empty': False,
+        })
 
     # 给没有时间标签的空行（time_sec < 0）设置 time_sec
     for i in range(len(entries)):
@@ -660,6 +677,8 @@ def parse_brc_content(content, bpm=120, beats_per_bar=4, audio_zero_bar=1, audio
                 'time_sec': current['time_sec'],
                 'text': current['text'],
                 'karaoke': current.get('karaoke', []),
+                'translation': current.get('translation'),
+                'translation_karaoke': current.get('translation_karaoke', []),
             })
             i += 1
 
