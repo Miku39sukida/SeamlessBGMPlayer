@@ -316,7 +316,7 @@
     base: { progress: 0, wall: 0, playing: false },        // 进度基准点（收到数据包时刷新，仅取播放器推送值）
     styleBusy: false, styleUnlockTimer: null,   // 风格切换中：禁用全部风格按钮，待播放器通知完成
     mixBusy: {}, mixUnlockTimer: {},             // 混音轨道切换中：按轨道分别禁用/启用
-    loop: { endingEnabled: false, endingPlaying: false, broken: false, fullEnabled: false, fullMode: false, fullSwitching: false },
+    loop: { endingEnabled: false, endingPlaying: false, broken: false, fullEnabled: false, fullSwitchable: false, fullMode: false, fullSwitching: false },
     preloadStates: {},          // idx -> 'idle' | 'loading' | 'done'（由播放器推送镜像，用于曲目列表预载按钮显示）
     sideTab: 'tracks'           // 抽屉当前标签：'tracks' | 'voices'
   };
@@ -533,10 +533,18 @@
         var item = document.createElement('div');
         item.className = 'track-item' + (t.idx === curIdx ? ' playing' : '');
         item.dataset.idx = String(t.idx);
+        var metaInner;
+        if (t.full_loop_enabled) {
+          metaInner = '<span class="t-full-loop-tag">🔁 完整循环（整首）</span>';
+        } else if (t.full_loop_switchable) {
+          metaInner = '<span class="t-full-loop-tag">🔄 可开关完整循环</span>';
+        } else {
+          metaInner = 'BPM ' + (t.bpm || '-') + ' · ' + (t.loop || '');
+        }
         item.innerHTML =
           '<div class="t-idx">' + (t.idx + 1) + '</div>' +
           '<div class="t-info"><div class="t-name">' + escapeHtml(t.name) + '</div>' +
-          '<div class="t-meta">BPM ' + (t.bpm || '-') + ' · ' + (t.loop || '') + '</div></div>' +
+          '<div class="t-meta">' + metaInner + '</div></div>' +
           '<button class="t-preload" data-idx="' + t.idx + '">⏬</button>';
         // 预加载按钮：点击仅触发预载（不播放），并阻止冒泡以免误触发整项播放
         var pb = item.querySelector('.t-preload');
@@ -652,18 +660,28 @@
     var hasTrack = !!(st.is_playing || st.is_paused);
     // 跳出循环 / 收尾（breakLoop：未配收尾时为跳出，配了收尾时自动走收尾）
     if (breakBtn) {
-      if (L.broken && L.endingEnabled) { breakBtn.textContent = '✓ 已收尾'; breakBtn.disabled = true; }
+      if (L.fullEnabled) {
+        // 「OST 原本」完整循环：无「循环段」可跳出，禁用按钮（与播放器主页一致）
+        breakBtn.disabled = true;
+        breakBtn.textContent = '⏭ 跳出循环';
+      }
+      else if (L.broken && L.endingEnabled) { breakBtn.textContent = '✓ 已收尾'; breakBtn.disabled = true; }
       else if (L.broken) { breakBtn.textContent = '✓ 已跳出循环'; breakBtn.disabled = true; }
       else if (L.endingPlaying) { breakBtn.textContent = '🎵 收尾中…'; breakBtn.disabled = true; }
       else { breakBtn.textContent = L.endingEnabled ? '🎵 收尾' : '⏭ 跳出循环'; breakBtn.disabled = !hasTrack; }
     }
     // 完整循环 / 返回循环段（toggleFullLoop 一个按钮两种状态）
     if (fullLoopBtn) {
-      if (!L.fullEnabled) { fullLoopBtn.style.display = 'none'; }
-      else {
+      if (L.fullEnabled) {
+        // 「OST 原本」完整循环：曲目加载即整首循环，不提供「返回循环段」切换（与播放器主页一致）
+        fullLoopBtn.style.display = 'none';
+      } else if (L.fullSwitchable) {
+        // 「可开关」完整循环：保留循环段配置，可自由切换循环段/整首
         fullLoopBtn.style.display = '';
         fullLoopBtn.textContent = L.fullMode ? '↩️ 返回循环段' : '🔄 完整循环';
         fullLoopBtn.disabled = L.fullSwitching || !hasTrack;
+      } else {
+        fullLoopBtn.style.display = 'none';
       }
     }
   }
@@ -833,6 +851,7 @@
       RC.loop.endingPlaying = !!d.loop_control.ending_playing;
       RC.loop.broken = !!d.loop_control.loop_broken;
       RC.loop.fullEnabled = !!d.loop_control.full_loop_enabled;
+      RC.loop.fullSwitchable = !!d.loop_control.full_loop_switchable;
       RC.loop.fullMode = !!d.loop_control.full_loop_mode;
       RC.loop.fullSwitching = !!d.loop_control.full_loop_switching;
     }
