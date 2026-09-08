@@ -354,7 +354,7 @@ proxy_status
 | 浏览器传输 | `fetch` + `credentials: 'include'`（session cookie）|
 
 **音频调度核心思路**：
-1. 每首曲目用两个 track 对象（A/B）做双缓冲；提前 `180ms` 通过 `setTimeout`（基于 `audioContext.currentTime` 绝对时间）挂下一跳
+1. 每首曲目用两个 track 对象（A/B）做双缓冲；切换由**基于 `audioContext.currentTime` 的 watchdog 调度**驱动——`scheduleNextLoop` 把下一轨切换的音频时钟点（`loopNextSwitchAtCtx`）作为权威，并在「终点前 `LOOP_PRELOAD_LEAD`」用递归 `setTimeout`（移动端 `3s`、桌面端 `0.18s`）主动触发 `doSwitch`；`doSwitch` 内部用 `audioContext.currentTime + remainingToEnd` 把下一轨 `start` 精确排到音频时钟，不依赖触发回调的及时性。后台 `setTimeout` 被节流时，watchdog 比对音频时钟仍能精确续上，根治后台循环中断。
 2. 所有 `start(offset, when)` 与增益 `setValueAtTime / linearRampToValueAtTime` 统一对齐到同一 `audioContext` 时间线，避免 RAF 帧率抖动
 3. 每个 source 额外绑定 `_guardOnended`：若调度漏判，`onended` 自动补跳，避免死循环中断
 4. 清理策略：`gain.value <= 0.006` 才 `disconnect`；设置了包络的节点再等 `stopAtCtx + 0.5s buffer` 才真正回收，杜绝爆音和衔接缝
@@ -378,6 +378,7 @@ proxy_status
 - **收尾歌词多端显示修复**：修复收尾后播放器歌词冻结不刷新（主渲染循环在收尾 `currentTrack` 置空前提前 return）、桌面歌词在收尾段里循环回绕（`syncLyricCacheToMain` 对已发的主循环参数取模）、收尾放完未真正停止（`onended` 只还原歌词没停）三处问题；手机端（非 Electron）同样依赖 `updateUi` 收尾分支修复。
 - **卡拉OK 歌词逐字动画与 BRC 解析增强（网页端）**：逐字进度改为「按起始时间戳分组平滑填充」最终方案——同时间戳多字合并为一组、从起始时刻平滑填到下一事件时刻（不再整组渐变、也不逐字瞬完），空/空格 token 保留为前一个实体字的结束时间标记、空格拼入文本，彻底消除高亮层与底文长度不一致导致的叠影，并回归 BRC 逐 token 语义（每个实体 token 一个 slot，`end = 下一 token 的 start`）；BRC 解析器支持「`[起始拍] 日文卡拉OK <…> [同一起始拍] 中文译文`」内联双语格式，遇 `[` 即截断避免吞掉中文分隔符，日文进 `karaoke`、中文独立作为 `translation`。
 - **卡拉OK 高亮 / 滚动改为「token 级合并」（网页端 + 桌面歌词）**：`_buildFlattenCharSlots` 不再把 token 拆成逐字 slot，而是**每个 token 作为一个整体 slot**——`要释`、`三界` 等多字同拍 token 整体一起高亮、一起滚动（合并单元），单字 token 即逐字；`end = 下一 token 的 start`，同拍连续 token 自动零时长瞬间完成（还原 PV「前段瞬 / 后段平滑」语义）。空格等空白含在所属 token 文本内，由像素地图按**真实字符宽度**量出边界百分比填充，不再像旧版「逐字等时」那样让窄空格占用与汉字相同的时间片导致高亮边在空格上慢速「爬行」不和谐。效果与网易云 / QQ 音乐等在线播放器的逐音节、同拍字一起亮一致。
+- **循环调度改为「基于音频时钟的 watchdog」，根治后台循环中断**：原 `scheduleNextLoop` 用 `setTimeout` 在「终点前 lookAhead」触发切轨，但后台 `setTimeout` 被浏览器节流到约 1 秒，触发晚时 `doSwitch` 内 `switchAtCtx = now + remainingToEnd` 的 `now` 已滞后，若此时播放位置已越过循环终点、卡拉OK `into` 回绕算出错误剩余时长，下一轨 `start` 被排到真终点之后 → 静音间隔、累积即「后台循环几次就断」。现改为：①`scheduleNextLoop` 把下一轨切换点记为权威的音频时钟 `loopNextSwitchAtCtx = audioCtx.currentTime + distToEnd`；②新增递归 `setTimeout` 的 `loopWatchdogTick` 持续比对 `audioCtx.currentTime >= loopNextSwitchAtCtx - LOOP_PRELOAD_LEAD`（移动端 `3s`、桌面端 `0.18s`）触发切轨，与 `setTimeout` 互为兜底、`loopArmed` 防双触发；③切轨用 `audioCtx.currentTime + remainingToEnd` 精确排下一轨 `start`（触发点已在终点前 3 秒窗口内，剩余时长恒准确）；④`pausePlayback` 与全部 `breakLoop`/`playEnding`/`toggleFullLoop`/`stopAll` 统一走 `cancelLoopScheduling()` 取消调度。模拟验证后台节流下下一轨始终精确对齐真终点（gap=0），无静音累积。
 
 ### v3.1.0
 - **遥控器（远程控制）功能完善**：在 v3.0.9 已有 WebSocket 远程控制框架基础上，把遥控器打磨为可用形态：
