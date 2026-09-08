@@ -926,7 +926,7 @@ function renderTrackCardBody(card, t) {
           <span>秒</span>
         </div>
         <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
-          提示：启用后播放器出现「完整循环」按钮，可在循环段与整首整曲循环之间交叉淡入淡出切换
+          提示：启用后曲目加载即进入整首完整循环，忽略 intro/循环段/跳转段/收尾/额外轨道等节拍相关配置；播放器仍显示「完整循环」按钮，可随时切换回循环段。适合官方 OST 或自带完整循环的游戏音频。
         </div>
       </div>
     </div>

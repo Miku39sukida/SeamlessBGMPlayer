@@ -1917,6 +1917,30 @@ const applyTrackCfg = (cfg) => {
     }
     const fosLabel = fadeOutAuto ? 'auto→loopEnd' : `${fosBar}:${fosBeat}`;
     DLog(`  fadeIn=${(fadeInS*1000).toFixed(0)}ms (from loopStart) fadeOut=${(fadeOutS*1000).toFixed(0)}ms (fos=${fosLabel} abs=${fadeOutStartS.toFixed(3)}s)`);
+
+    // 完整循环模式：忽略所有基于节拍的循环配置，直接用整首音频做无缝循环
+    if (cfg.full_loop_enabled && audioDurS > 0.01) {
+        // 先保存原始循环段参数，便于用户点击「返回循环段」时恢复
+        if (!window._savedLoopParams) {
+            window._savedLoopParams = {
+                loopStartS, loopEndS, loopDurS, fadeInS, fadeOutS,
+            };
+        }
+        loopMode = 'single';
+        startS = 0;
+        loopStartS = 0;
+        loopEndS = audioDurS;
+        loopDurS = audioDurS;
+        effectiveLoopEndS = audioDurS;
+        effectiveLoopDurS = audioDurS;
+        fadeInS = 0;
+        fadeOutS = 0;
+        fadeOutStartS = audioDurS;
+        lyricEndS = audioDurS;
+        jumpSegEnabled = false;
+        DLog(`  FULL LOOP enabled: loop=[0 → ${audioDurS.toFixed(3)}], mode=single, beat config ignored for audio`);
+    }
+
     syncLyricCacheToMain();
 };
 
@@ -2319,9 +2343,17 @@ const playTrack = async (idx) => {
             extraTracksEnabled = extraTracks.length > 0;
         };
 
-        multiStyleMode = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
+        multiStyleMode = !cfg.full_loop_enabled && !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         styleTracks = {};
         currentStyleIdx = -1;
+
+        // 完整循环模式：忽略前奏/收尾/额外轨道/循环音效等依赖节拍切换的附加功能
+        if (cfg.full_loop_enabled) {
+            introEnabledPre = false;
+            endingEnabledPre = false;
+            extraTracksEnabledPre = false;
+            loopSfxEnabledPre = false;
+        }
 
         introEnabled = introEnabledPre && !!introBufferPre;
         introBuffer = introBufferPre;
@@ -2451,16 +2483,18 @@ const playTrack = async (idx) => {
                 DLog(`playTrack: ctx.currentTime=${ctxCurrentTime.toFixed(4)}, now=${now.toFixed(4)}`);
                 DLog(`playTrack: startS=${startS.toFixed(4)} audioBuffer=${!!audioBuffer} ctxState=${audioCtx.state}`);
 
-                // 移动端简单循环：使用 Web Audio API 原生 source.loop = true
-                // 循环完全由音频渲染线程处理，不依赖 setTimeout，切后台零丢音
-                // 仅限单轨模式且无跳段/额外轨道/结尾/SFX（这些需要 setTimeout 触发副作用）
-                const useNativeLoop = IS_MOBILE_DEVICE
-                    && loopMode === 'single'
-                    && !jumpSegEnabled
-                    && !extraTracksEnabled
-                    && !endingEnabled
-                    && !loopSfxEnabled
-                    && loopDurS > 0.01;
+                // 原生循环：使用 Web Audio API source.loop = true，循环由音频渲染线程处理，
+                // 不依赖 setTimeout，切后台零丢音。触发条件：
+                // 1) 完整循环模式（isFullLoopMode）强制走原生循环， regardless of 设备类型；
+                // 2) 移动端单轨、无跳段/额外轨道/结尾/SFX 时也可以走原生循环。
+                const useNativeLoop = (isFullLoopMode && loopMode === 'single')
+                    || (IS_MOBILE_DEVICE
+                        && loopMode === 'single'
+                        && !jumpSegEnabled
+                        && !extraTracksEnabled
+                        && !endingEnabled
+                        && !loopSfxEnabled
+                        && loopDurS > 0.01);
 
                 const playSuccess = playSegmentAt(currentTrack, startS, now, {
                     enableLoop: useNativeLoop,
@@ -2553,7 +2587,7 @@ const playTrack = async (idx) => {
 
         // 完整循环初始化
         fullLoopEnabled = !!cfg.full_loop_enabled;
-        isFullLoopMode = false;
+        isFullLoopMode = fullLoopEnabled;
         fullLoopSwitching = false;
 
         // 循环提示音效初始化（不立即播放）
@@ -2578,7 +2612,7 @@ const playTrack = async (idx) => {
             if (fullLoopEnabled) {
                 fullLoopBtn.style.display = '';
                 fullLoopBtn.disabled = false;
-                fullLoopBtn.textContent = '🔄 完整循环';
+                fullLoopBtn.textContent = isFullLoopMode ? '↩️ 返回循环段' : '🔄 完整循环';
             } else {
                 fullLoopBtn.style.display = 'none';
             }
