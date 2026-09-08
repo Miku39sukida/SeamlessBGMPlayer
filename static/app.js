@@ -20,6 +20,9 @@ let currentPlayingIdx = -1;   // 当前正在播放/暂停的曲目索引（用�
 const trackPreloadState = {}; // idx -> 'idle' | 'loading' | 'done'
 let nextTrack = null;
 let loopSchedulerTimer = null;
+let loopNextSwitchAtCtx = 0;   // 下一轨切换的 audioCtx 时间戳（权威调度点，基于音频时钟）
+let loopArmed = false;          // 是否已 arm 等待触发循环切换（防止 setTimeout 与 watchdog 双触发）
+let loopWatchdogTimer = null;   // 基于音频时钟的循环 watchdog 定时器（递归 setTimeout 常驻）
 let rafId = null;
 let config = { tracks: [] };
 // 移动端检测：移动浏览器切后台时 setTimeout 会被节流到 1 秒
@@ -497,12 +500,55 @@ const getRawPlaybackPos = (track) => {
     return Math.max(0, audioCtx.currentTime - track.startedAtCtx + track.startOffset);
 };
 
+// 循环切换提前量（秒）：移动端 3 秒（抵消 setTimeout 后台节流），桌面端 0.18 秒。
+// 含义：基于音频时钟的 watchdog 在「下一轨切换点 - LOOP_PRELOAD_LEAD」时就触发切轨，
+// 把下一轨 start 用 audioCtx.currentTime + remainingToEnd 精确排到音频时钟——
+// 即便后台 JS 被节流，切换仍按硬件时钟精确发生，不会累积静音。
+const LOOP_PRELOAD_LEAD = IS_MOBILE_DEVICE ? 3.0 : 0.18;
+
+// 统一取消循环调度：清 setTimeout + 解除 arm + 清权威切换点，避免 stale watchdog 误触发
+const cancelLoopScheduling = () => {
+    if (loopSchedulerTimer) { clearTimeout(loopSchedulerTimer); loopSchedulerTimer = null; }
+    loopArmed = false;
+    loopNextSwitchAtCtx = 0;
+};
+
+// 基于音频时钟触发循环切换：setTimeout 在后台被浏览器节流到 ~1s，
+// 故用 audioCtx.currentTime 与「下一轨切换点」比较来决定是否现在就排好下一轨 start。
+// doSwitch 内部用 audioCtx.currentTime + remainingToEnd 把下一轨精确排到音频时钟，
+// 不依赖本回调的及时性；loopArmed 防止 setTimeout 与 watchdog 重复触发。
+const fireLoopSwitch = () => {
+    if (!loopArmed) return;
+    loopArmed = false;
+    if (loopSchedulerTimer) { clearTimeout(loopSchedulerTimer); loopSchedulerTimer = null; }
+    if (multiStyleMode) {
+        if (loopMode === 'single') doSingleJumpMultiStyle();
+        else doDualSwitchMultiStyle();
+    } else {
+        if (loopMode === 'single') doSingleJump();
+        else doDualSwitch();
+    }
+};
+
+// 循环 watchdog：基于音频时钟的兜底触发，独立于 setTimeout（后台被节流时仍能生效）。
+// 用递归 setTimeout(250ms)（非 setInterval），后台自动节流到 ~1s 且不堆积；
+// LOOP_PRELOAD_LEAD=3s 保证在「终点前 3s」窗口内至少唤醒数次，必能触发。
+const loopWatchdogTick = () => {
+    loopWatchdogTimer = setTimeout(loopWatchdogTick, 250);
+    if (!loopArmed || !audioCtx || isPaused || !currentTrack) return;
+    if (loopNextSwitchAtCtx > 0 && audioCtx.currentTime >= loopNextSwitchAtCtx - LOOP_PRELOAD_LEAD) {
+        fireLoopSwitch();
+    }
+};
+
 const scheduleNextLoop = () => {
     if (!currentTrack || !audioCtx) return;
     // 暂停期间不调度循环边界（上下文已 suspend，时钟冻结，恢复后统一重启）
     if (isPaused) return;
     // 原生循环模式（移动端）：source.loop = true 时由 Web Audio API 音频线程
     // 自行处理循环，完全不依赖 setTimeout，免疫后台节流
+    loopArmed = false;
+    loopNextSwitchAtCtx = 0;
     if (currentTrack.source && currentTrack.source.loop) {
         // 同步最新循环点到 source（用户可能调整了循环设置）
         try {
@@ -580,15 +626,13 @@ const scheduleNextLoop = () => {
 
     DLog(`scheduleNextLoop[${loopMode} phase=${loopPhase} style=${currentStyleIdx}]: raw=${raw.toFixed(3)} distToEnd=${distToEnd.toFixed(3)} lookAhead=${(lookAhead*1000).toFixed(0)}ms delay=${triggerDelayMs.toFixed(0)}ms nearEnd=${nearAudioEnd}`);
 
-    loopSchedulerTimer = setTimeout(() => {
-        if (multiStyleMode) {
-            if (loopMode === 'single') doSingleJumpMultiStyle();
-            else doDualSwitchMultiStyle();
-        } else {
-            if (loopMode === 'single') doSingleJump();
-            else doDualSwitch();
-        }
-    }, triggerDelayMs);
+    loopNextSwitchAtCtx = now + distToEnd;   // 下一轨切换的音频时钟点（权威）
+    loopArmed = true;
+    // 启动基于音频时钟的循环 watchdog（首次 arm 时启动，常驻递归）：
+    // 后台 setTimeout 被节流到 ~1s，watchdog 用 audioCtx.currentTime 比对切换点，
+    // 提前 LOOP_PRELOAD_LEAD 秒触发，把下一轨 start 精确排到音频时钟，不依赖 JS 回调及时性。
+    if (loopWatchdogTimer == null) loopWatchdogTimer = setTimeout(loopWatchdogTick, 250);
+    loopSchedulerTimer = setTimeout(() => { fireLoopSwitch(); }, triggerDelayMs);
 };
 
 const syncExtraTracksOnJump = (targetOffset, fadeStartAtCtx, fadeEndAtCtx, xfadeS) => {
@@ -2815,8 +2859,7 @@ const breakLoop = () => {
 
     loopBroken = true;
 
-    clearTimeout(loopSchedulerTimer);
-    loopSchedulerTimer = null;
+    cancelLoopScheduling();
 
     if (multiStyleMode) {
         for (const sIdx in styleTracks) {
@@ -2872,8 +2915,7 @@ const playEnding = async () => {
     endingPlaying = true;
     loopBroken = true;
 
-    clearTimeout(loopSchedulerTimer);
-    loopSchedulerTimer = null;
+    cancelLoopScheduling();
 
     const fadeDur = Number(activeTrackCfg.ending_fade_duration) || 2.0;
     const now = audioCtx.currentTime + 0.02;
@@ -3064,8 +3106,7 @@ const toggleFullLoop = () => {
         const flBtn = $('fullLoopBtn');
         if (flBtn) flBtn.textContent = '↩️ 返回循环段';
 
-        clearTimeout(loopSchedulerTimer);
-        loopSchedulerTimer = null;
+        cancelLoopScheduling();
         scheduleNextLoop();
 
         // 同步完整循环参数到主进程，避免桌面歌词仍按旧循环段回绕
@@ -3155,8 +3196,7 @@ const toggleFullLoop = () => {
         const flBtn = $('fullLoopBtn');
         if (flBtn) flBtn.textContent = '🔄 完整循环';
 
-        clearTimeout(loopSchedulerTimer);
-        loopSchedulerTimer = null;
+        cancelLoopScheduling();
         scheduleNextLoop();
 
         DLog('toggleFullLoop: back to segment loop (in range, no track change)');
@@ -3418,8 +3458,7 @@ const toggleFullLoop = () => {
         }
 
         // 重新调度循环
-        clearTimeout(loopSchedulerTimer);
-        loopSchedulerTimer = null;
+        cancelLoopScheduling();
         scheduleNextLoop();
 
         DLog(`toggleFullLoop: COMPLETE (mode=segment, crossfade, fadeOut=${FADE_OUT_DUR}s, fadeIn=${fadeDur.toFixed(2)}s, multiStyle=${multiStyleMode})`);
@@ -3449,6 +3488,7 @@ const pausePlayback = async () => {
     if (!currentTrack || !audioCtx || isPaused) return;
     if (!currentTrack.source) return;
     isPaused = true;
+    cancelLoopScheduling();   // 暂停时取消循环调度，避免后台 setTimeout/watchdog 在 suspend 态误切轨
     updatePauseButton();
     if (currentPlayingIdx >= 0) refreshTrackButton(currentPlayingIdx);
     rcBroadcastState();
@@ -3505,8 +3545,7 @@ const togglePause = async () => {
 const stopAll = async () => {
     // 取消可能因无手势而延迟的播放（已停止，不应再启动）
     pendingBeginPlayback = null;
-    clearTimeout(loopSchedulerTimer);
-    loopSchedulerTimer = null;
+    cancelLoopScheduling();
     cancelAnimationFrame(rafId);
     rafId = null;
 
