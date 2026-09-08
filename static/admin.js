@@ -100,6 +100,7 @@ function defaultTrack() {
     ending_audio_zero_beat: 1,
     full_loop_enabled: false,
     full_loop_fade_duration: 2.0,
+    full_loop_switchable: false,
     loop_sfx_enabled: false,
     loop_sfx_filename: '',
     loop_sfx_dir_id: '',
@@ -715,6 +716,29 @@ function renderTrackCardBody(card, t) {
       </div>
     </div>
 
+    <div class="section-title">🔄 完整循环（可选）</div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="full_loop_enabled"> 完整循环（OST 原本）
+      </label>
+      <div class="full-loop-panel" data-k="full_loop_panel" style="display:none; margin-top:12px;">
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          启用后曲目加载即进入整首完整循环：整首音频通过 Web Audio 原生 <code>source.loop = true</code> 无缝循环；下方所有节拍相关配置（对齐、循环段、淡入淡出、跳转段、变速/变拍、多风格、多轨道、前奏/收尾/循环提示音效）将被忽略，播放器与遥控器<strong>不显示「返回循环段」按钮</strong>（OST 本身即整首循环，无循环段可返回）。适合官方 OST 或自带完整循环的游戏音频（如 NEEDY GIRL OVERDOSE）。
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" data-k="full_loop_switchable"> 可开关的完整循环
+      </label>
+      <div class="full-loop-panel" data-k="full_loop_switch_panel" style="display:none; margin-top:12px;">
+        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
+          启用后曲目<strong>保留原有循环段配置</strong>，播放器与遥控器显示「🔄 完整循环 / ↩️ 返回循环段」按钮，可在「循环段」与「整首完整循环」之间随时切换；下方节拍配置需正常填写循环段。「OST 原本」与「可开关」二者互斥（勾选其一会自动取消另一个）。适合自带循环段、但允许临时整首循环的曲目（如《热际率舞 Dance at the Realm of Heat》）。
+        </div>
+      </div>
+    </div>
+
+    <div data-k="beat_config_panel">
     <div class="section-title">🕐 节拍对齐</div>
     <div class="grid-4">
       <div class="field">
@@ -914,23 +938,6 @@ function renderTrackCardBody(card, t) {
       </div>
     </div>
 
-    <div class="section-title">🔄 完整循环（可选）</div>
-    <div class="field">
-      <label class="checkbox-label">
-        <input type="checkbox" data-k="full_loop_enabled"> 启用完整循环切换
-      </label>
-      <div class="full-loop-panel" data-k="full_loop_panel" style="display:none; margin-top:12px;">
-        <div class="field-row">
-          <label>切换淡入淡出时长:</label>
-          <input type="number" class="full-loop-fade-dur" min="0.1" step="0.1" value="2.0" data-k="full_loop_fade_duration">
-          <span>秒</span>
-        </div>
-        <div class="hint" style="margin-top:6px; font-size:12px; color:var(--text-light);">
-          提示：启用后曲目加载即进入整首完整循环，忽略 intro/循环段/跳转段/收尾/额外轨道等节拍相关配置；播放器仍显示「完整循环」按钮，可随时切换回循环段。适合官方 OST 或自带完整循环的游戏音频。
-        </div>
-      </div>
-    </div>
-
     <div class="section-title">🔔 循环提示音效（可选）</div>
     <div class="field">
       <label class="checkbox-label">
@@ -953,6 +960,7 @@ function renderTrackCardBody(card, t) {
           提示：切入循环点时先播放音效，再从循环起点前指定节拍数开始淡入，实现更流畅的切换
         </div>
       </div>
+    </div>
     </div>
 
     <div class="section-title">🎙 角色语音（可选）</div>
@@ -1692,25 +1700,39 @@ function renderTrackCardBody(card, t) {
     });
   }
 
-  // --- 完整循环 ---
+  // --- 完整循环（OST 原本 / 可开关，互斥） ---
   const fullLoopEnabledCheck = card.querySelector('input[data-k="full_loop_enabled"]');
   const fullLoopPanel = card.querySelector('[data-k="full_loop_panel"]');
-  const fullLoopFadeDur = card.querySelector('.full-loop-fade-dur');
+  const fullLoopSwitchableCheck = card.querySelector('input[data-k="full_loop_switchable"]');
+  const fullLoopSwitchPanel = card.querySelector('[data-k="full_loop_switch_panel"]');
+  const beatConfigPanel = card.querySelector('[data-k="beat_config_panel"]');
   if (fullLoopEnabledCheck) {
     fullLoopEnabledCheck.checked = !!t.full_loop_enabled;
-    fullLoopPanel.style.display = t.full_loop_enabled ? '' : 'none';
+    if (fullLoopSwitchableCheck) fullLoopSwitchableCheck.checked = !!t.full_loop_switchable;
+    const syncFullLoopUi = () => {
+      const en = !!fullLoopEnabledCheck.checked;
+      const sw = fullLoopSwitchableCheck ? !!fullLoopSwitchableCheck.checked : false;
+      if (fullLoopPanel) fullLoopPanel.style.display = en ? '' : 'none';
+      if (fullLoopSwitchPanel) fullLoopSwitchPanel.style.display = sw ? '' : 'none';
+      // 仅「OST 原本」忽略节拍配置；「可开关」保留循环段配置（不隐藏）
+      if (beatConfigPanel) beatConfigPanel.style.display = en ? 'none' : '';
+      markDirty(card);
+    };
+    syncFullLoopUi();
     fullLoopEnabledCheck.addEventListener('change', () => {
+      if (fullLoopEnabledCheck.checked && fullLoopSwitchableCheck) fullLoopSwitchableCheck.checked = false;
       t.full_loop_enabled = fullLoopEnabledCheck.checked;
-      fullLoopPanel.style.display = t.full_loop_enabled ? '' : 'none';
-      markDirty(card);
+      t.full_loop_switchable = fullLoopSwitchableCheck ? fullLoopSwitchableCheck.checked : false;
+      syncFullLoopUi();
     });
-  }
-  if (fullLoopFadeDur) {
-    fullLoopFadeDur.value = t.full_loop_fade_duration != null ? t.full_loop_fade_duration : 2.0;
-    fullLoopFadeDur.addEventListener('input', () => {
-      t.full_loop_fade_duration = Math.max(0.1, parseFloat(fullLoopFadeDur.value) || 2.0);
-      markDirty(card);
-    });
+    if (fullLoopSwitchableCheck) {
+      fullLoopSwitchableCheck.addEventListener('change', () => {
+        if (fullLoopSwitchableCheck.checked && fullLoopEnabledCheck) fullLoopEnabledCheck.checked = false;
+        t.full_loop_switchable = fullLoopSwitchableCheck.checked;
+        t.full_loop_enabled = fullLoopEnabledCheck ? fullLoopEnabledCheck.checked : false;
+        syncFullLoopUi();
+      });
+    }
   }
 
   // --- 循环提示音效 ---

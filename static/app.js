@@ -92,6 +92,7 @@ let introPlaying = false;
 let fullLoopEnabled = false;
 let isFullLoopMode = false;
 let fullLoopSwitching = false;
+let fullLoopSwitchable = false;
 
 let loopSfxEnabled = false;
 let loopSfxBuffer = null;
@@ -1918,8 +1919,10 @@ const applyTrackCfg = (cfg) => {
     const fosLabel = fadeOutAuto ? 'auto→loopEnd' : `${fosBar}:${fosBeat}`;
     DLog(`  fadeIn=${(fadeInS*1000).toFixed(0)}ms (from loopStart) fadeOut=${(fadeOutS*1000).toFixed(0)}ms (fos=${fosLabel} abs=${fadeOutStartS.toFixed(3)}s)`);
 
-    // 完整循环模式：忽略所有基于节拍的循环配置，直接用整首音频做无缝循环
-    if (cfg.full_loop_enabled && audioDurS > 0.01) {
+    // 完整循环：区分「OST 原本」(full_loop_enabled) 与「可开关」(full_loop_switchable)
+    const nativeFullLoop = !!(cfg.full_loop_enabled) && !cfg.full_loop_switchable;
+    // 可开关完整循环保留循环段配置，仅由 toggleFullLoop 在运行时切换，这里不改任何 loop 参数
+    if (nativeFullLoop && audioDurS > 0.01) {
         // 先保存原始循环段参数，便于用户点击「返回循环段」时恢复
         if (!window._savedLoopParams) {
             window._savedLoopParams = {
@@ -1950,10 +1953,11 @@ const preloadedTracks = {};
 const loadTrackAssets = async (cfg) => {
     const loadedLyricLines = await loadLyrics(cfg, false);
 
-    const multiStyleModePre = !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
-    const extraTracksEnabledPre = !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
-    const endingEnabledPre = !!(cfg.ending_enabled && cfg.ending_filename);
-    const loopSfxEnabledPre = !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
+    const nativeFullLoopPre = !!(cfg.full_loop_enabled) && !cfg.full_loop_switchable;
+    const multiStyleModePre = !nativeFullLoopPre && !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
+    const extraTracksEnabledPre = !nativeFullLoopPre && !!(cfg.extra_tracks_enabled && Array.isArray(cfg.extra_tracks) && cfg.extra_tracks.length > 0);
+    const endingEnabledPre = !nativeFullLoopPre && !!(cfg.ending_enabled && cfg.ending_filename);
+    const loopSfxEnabledPre = !nativeFullLoopPre && !!(cfg.loop_sfx_enabled && cfg.loop_sfx_filename);
     const styleBuffers = {};
     let mainBuffer = null;
     let extraTrackBuffers = [];
@@ -2033,8 +2037,8 @@ const loadTrackAssets = async (cfg) => {
         })());
     }
 
-    // 前奏音频
-    const introEnabledPre = !!(cfg.intro_enabled && cfg.intro_filename);
+    // 前奏音频（完整循环模式下忽略）
+    const introEnabledPre = !nativeFullLoopPre && !!(cfg.intro_enabled && cfg.intro_filename);
     let introBufferPre = null;
     if (introEnabledPre) {
         allLoadPromises.push((async () => {
@@ -2343,17 +2347,9 @@ const playTrack = async (idx) => {
             extraTracksEnabled = extraTracks.length > 0;
         };
 
-        multiStyleMode = !cfg.full_loop_enabled && !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
+        multiStyleMode = (!cfg.full_loop_enabled || cfg.full_loop_switchable) && !!(cfg.multi_style_enabled && Array.isArray(cfg.styles) && cfg.styles.length > 0);
         styleTracks = {};
         currentStyleIdx = -1;
-
-        // 完整循环模式：忽略前奏/收尾/额外轨道/循环音效等依赖节拍切换的附加功能
-        if (cfg.full_loop_enabled) {
-            introEnabledPre = false;
-            endingEnabledPre = false;
-            extraTracksEnabledPre = false;
-            loopSfxEnabledPre = false;
-        }
 
         introEnabled = introEnabledPre && !!introBufferPre;
         introBuffer = introBufferPre;
@@ -2586,9 +2582,13 @@ const playTrack = async (idx) => {
         endingPlaying = false;
 
         // 完整循环初始化
-        fullLoopEnabled = !!cfg.full_loop_enabled;
-        isFullLoopMode = fullLoopEnabled;
+        const nativeFL = !!(cfg.full_loop_enabled) && !cfg.full_loop_switchable;
+        const switchableFL = !!cfg.full_loop_switchable;
+        fullLoopEnabled = nativeFL;
+        fullLoopSwitchable = switchableFL;
+        isFullLoopMode = nativeFL;
         fullLoopSwitching = false;
+        updateBeatUiVisibility();
 
         // 循环提示音效初始化（不立即播放）
         loopSfxEnabled = loopSfxEnabledPre && !!loopSfxBufferPre;
@@ -2601,19 +2601,30 @@ const playTrack = async (idx) => {
         const breakBtn = $('breakLoopBtn');
         const fullLoopBtn = $('fullLoopBtn');
         if (breakBtn) {
-            breakBtn.disabled = false;
-            if (endingEnabled) {
-                breakBtn.textContent = '🎵 收尾';
-            } else {
+            if (nativeFL) {
+                // OST 原本完整循环：无「循环段」可跳出，禁用该按钮
+                breakBtn.disabled = true;
                 breakBtn.textContent = '⏭ 跳出循环';
+            } else {
+                breakBtn.disabled = false;
+                if (endingEnabled) {
+                    breakBtn.textContent = '🎵 收尾';
+                } else {
+                    breakBtn.textContent = '⏭ 跳出循环';
+                }
             }
         }
         if (fullLoopBtn) {
-            if (fullLoopEnabled) {
+            if (nativeFL) {
+                // OST 原本完整循环：隐藏切换按钮（无循环段可返回）
+                fullLoopBtn.style.display = 'none';
+            } else if (switchableFL) {
+                // 可开关完整循环：显示切换按钮，跟随当前模式
                 fullLoopBtn.style.display = '';
                 fullLoopBtn.disabled = false;
                 fullLoopBtn.textContent = isFullLoopMode ? '↩️ 返回循环段' : '🔄 完整循环';
             } else {
+                // 普通按节拍循环：不显示完整循环按钮
                 fullLoopBtn.style.display = 'none';
             }
         }
@@ -3105,6 +3116,8 @@ const playEnding = async () => {
 const toggleFullLoop = () => {
     if (!currentTrack || !audioBuffer || fullLoopSwitching) return;
     if (!activeTrackCfg) return;
+    // 仅「OST 原本」完整循环阻止切换（无循环段可返回）；「可开关」完整循环允许在循环段/整首间切换
+    if (activeTrackCfg.full_loop_enabled && !activeTrackCfg.full_loop_switchable) return;
 
     fullLoopSwitching = true;
 
@@ -3145,6 +3158,7 @@ const toggleFullLoop = () => {
 
         // 同步完整循环参数到主进程，避免桌面歌词仍按旧循环段回绕
         syncLyricCacheToMain();
+        updateBeatUiVisibility();
 
         DLog('toggleFullLoop: switched to full loop mode (no track change)');
         return;
@@ -3152,7 +3166,7 @@ const toggleFullLoop = () => {
 
     // 以下为「返回循环段」逻辑
     const curRaw = getRawPlaybackPos(currentTrack);
-    const fadeDurCfg = Number(activeTrackCfg.full_loop_fade_duration) || 2.0;
+    const fadeDurCfg = 1.0; // 返回循环段时的固定过渡时长，不再提供配置项
 
     const origLoopStart = window._savedLoopParams ? window._savedLoopParams.loopStartS : loopStartS;
     const origLoopEnd = window._savedLoopParams ? window._savedLoopParams.loopEndS : loopEndS;
@@ -3232,6 +3246,7 @@ const toggleFullLoop = () => {
 
         cancelLoopScheduling();
         scheduleNextLoop();
+        updateBeatUiVisibility();
 
         DLog('toggleFullLoop: back to segment loop (in range, no track change)');
         return;
@@ -3485,6 +3500,7 @@ const toggleFullLoop = () => {
 
         isFullLoopMode = false;
         fullLoopSwitching = false;
+        updateBeatUiVisibility();
 
         if (flBtn) {
             flBtn.disabled = false;
@@ -3759,40 +3775,46 @@ const updateUi = () => {
     if (!currentTrack && !endingPlaying) return;
     const s = currentPlaySec();
 
-    // 拍/进度/闪点等主轨相关 UI 只在主轨存在时更新；收尾时这些本就无意义
+    // 进度条始终更新；节拍/闪点只在非完整循环模式下更新
     if (currentTrack) {
-        let beatSec = s;
         let uiTotalDur = Math.max(audioDurS || 1, loopEndS || 1);
         if (multiStyleMode && currentStyleIdx >= 0) {
             const entry = styleTracks[currentStyleIdx];
             if (entry) {
-                if (entry.offsetDiff != null) beatSec = s - entry.offsetDiff;
                 uiTotalDur = Math.max(entry.duration || audioDurS || 1, entry.loopEndS || loopEndS || 1);
             }
         }
-        const bb = barBeat(beatSec);
-        const formattedBeat = Number(bb.beat.toFixed(2));
-        $('curBeat').textContent = `${bb.bar}:${formattedBeat}`;
-        $('curMs').textContent = Math.floor(s * 1000).toString();
-        $('curSec').textContent = s.toFixed(3);
 
         const pct = Math.min(99.9, (s / uiTotalDur) * 100);
         $('progressFill').style.width = pct + '%';
         $('progressStart').textContent = fmtTime(0);
         $('progressEnd').textContent = fmtTime(uiTotalDur);
 
-        const beatIdx = Math.max(0, Math.min(3, Math.floor(bb.beat - 1)));
-        if (beatIdx !== lastBeatIdx) {
-            for (let i = 1; i <= 4; i++) {
-                const dot = $('flashDot' + i);
-                if (!dot) continue;
-                dot.classList.remove('active', 'first');
-                if (i - 1 === beatIdx) {
-                    dot.classList.add('active');
-                    if (beatIdx === 0) dot.classList.add('first');
-                }
+        if (!isFullLoopMode) {
+            let beatSec = s;
+            if (multiStyleMode && currentStyleIdx >= 0) {
+                const entry = styleTracks[currentStyleIdx];
+                if (entry && entry.offsetDiff != null) beatSec = s - entry.offsetDiff;
             }
-            lastBeatIdx = beatIdx;
+            const bb = barBeat(beatSec);
+            const formattedBeat = Number(bb.beat.toFixed(2));
+            $('curBeat').textContent = `${bb.bar}:${formattedBeat}`;
+            $('curMs').textContent = Math.floor(s * 1000).toString();
+            $('curSec').textContent = s.toFixed(3);
+
+            const beatIdx = Math.max(0, Math.min(3, Math.floor(bb.beat - 1)));
+            if (beatIdx !== lastBeatIdx) {
+                for (let i = 1; i <= 4; i++) {
+                    const dot = $('flashDot' + i);
+                    if (!dot) continue;
+                    dot.classList.remove('active', 'first');
+                    if (i - 1 === beatIdx) {
+                        dot.classList.add('active');
+                        if (beatIdx === 0) dot.classList.add('first');
+                    }
+                }
+                lastBeatIdx = beatIdx;
+            }
         }
     }
 
@@ -3816,7 +3838,16 @@ const startUiTicker = () => {
 };
 
 const renderMarkers = () => {
-    // 完整循环模式下，标记始终显示原始循环段位置
+    // 完整循环模式下不显示任何节拍相关标记
+    if (isFullLoopMode) {
+        ['markerLoopStart','markerLoopEnd','markerFadeOut','markerJumpSegStart','markerJumpSegEnd'].forEach(id => {
+            const el = $(id);
+            if (el) el.style.display = 'none';
+        });
+        return;
+    }
+
+    // 普通循环模式下，标记始终显示原始循环段位置
     const savedP = window._savedLoopParams;
     const mLoopStartSrc = (isFullLoopMode && savedP) ? savedP.loopStartS : loopStartS;
     const mLoopEndSrc = (isFullLoopMode && savedP) ? savedP.loopEndS : loopEndS;
@@ -3889,11 +3920,28 @@ const renderMarkers = () => {
     }
 };
 
+const updateBeatUiVisibility = () => {
+    const hide = isFullLoopMode;
+    const trackMeta = $('trackMeta');
+    const beatDisplay = $('beatDisplay');
+    const loopInfo = $('loopInfo');
+    const beatFlash = $('beatFlash');
+    if (trackMeta) trackMeta.style.display = hide ? 'none' : '';
+    if (beatDisplay) beatDisplay.style.display = hide ? 'none' : '';
+    if (loopInfo) loopInfo.style.display = hide ? 'none' : '';
+    if (beatFlash) beatFlash.style.display = hide ? 'none' : '';
+};
+
 const updateInfoPanel = (idx) => {
     const cfg = config.tracks[idx];
     if (!cfg) return;
+    const isFull = !!cfg.full_loop_enabled;
     const modeTag = cfg.loop_mode === 'dual' ? ' [双轨]' : ' [单轨]';
-    $('trackName').textContent = cfg.name + modeTag;
+    $('trackName').textContent = cfg.name + (isFull ? ' [完整循环]' : modeTag);
+
+    updateBeatUiVisibility();
+    if (isFull) return;
+
     $('trackBpm').textContent = `BPM: ${cfg.bpm}`;
     $('trackSig').textContent = `拍号: ${cfg.beats_per_bar}/${window.BeatUtils.noteValueDenom(cfg.note_value)}`;
     $('loopStartInfo').textContent = `${cfg.loop_start_bar}:${cfg.loop_start_beat}`;
@@ -3990,11 +4038,21 @@ const renderTrackList = () => {
             const le = secFromBarBeatWrap(cfg, cfg.loop_end_bar, cfg.loop_end_beat);
             const dur = Math.max(0, le - ls);
             const modeTag = cfg.loop_mode === 'dual' ? ' · 双轨' : ' · 单轨';
+            const isNativeFL = !!cfg.full_loop_enabled && !cfg.full_loop_switchable;
+            const isSwitchableFL = !!cfg.full_loop_switchable;
+            let metaHtml;
+            if (isNativeFL) {
+                metaHtml = '<span class="t-full-loop-tag">🔁 完整循环（整首）</span>';
+            } else if (isSwitchableFL) {
+                metaHtml = '<span class="t-full-loop-tag">🔄 可开关完整循环</span>' + modeTag;
+            } else {
+                metaHtml = `${cfg.bpm} BPM${modeTag} · ${cfg.loop_start_bar}:${cfg.loop_start_beat} → ${cfg.loop_end_bar}:${cfg.loop_end_beat} · 循环${dur.toFixed(2)}s`;
+            }
             el.innerHTML = `
                 <div class="idx">${idx + 1}</div>
                 <div class="info">
                     <div class="t-name">${escapeHtml(cfg.name)}</div>
-                    <div class="t-meta">${cfg.bpm} BPM${modeTag} · ${cfg.loop_start_bar}:${cfg.loop_start_beat} → ${cfg.loop_end_bar}:${cfg.loop_end_beat} · 循环${dur.toFixed(2)}s</div>
+                    <div class="t-meta">${metaHtml}</div>
                 </div>
                 <button class="preload-btn" data-idx="${idx}" title="预加载（点击后再播放无需等待）">⏬</button>
             `;
@@ -4670,6 +4728,7 @@ const rcBroadcastState = () => {
             ending_playing: !!endingPlaying,
             loop_broken: !!loopBroken,
             full_loop_enabled: !!fullLoopEnabled,
+            full_loop_switchable: !!fullLoopSwitchable,
             full_loop_mode: !!isFullLoopMode,
             full_loop_switching: !!fullLoopSwitching,
         },
